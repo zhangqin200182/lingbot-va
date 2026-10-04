@@ -1,0 +1,4 @@
+# only needed to re-run the analysis scripts; the HTML itself has no dependencies
+torch>=2.4
+diffusers>=0.35
+numpy>=1.26

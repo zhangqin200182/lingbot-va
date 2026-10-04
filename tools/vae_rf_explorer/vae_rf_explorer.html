@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wan2.2 VAE 感受野 / 影响域浏览器</title>
+<style>
+:root{
+  --ground:#f6f6f4; --surface:#ffffff; --sunken:#ecede9; --rule:#d6d8d2;
+  --ink:#191b19; --ink2:#4d524c; --ink3:#7e847d;
+  --enc:#a4551a; --enc-soft:#e5c3a4; --enc-wash:#f9f0e8;
+  --dec:#24596f; --dec-soft:#b8d2dd; --dec-wash:#eaf2f6;
+  --ok:#3f6b4a;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121413; --surface:#1a1d1b; --sunken:#232724; --rule:#333834;
+    --ink:#eceae4; --ink2:#a9afa7; --ink3:#79807a;
+    --enc:#e2a06a; --enc-soft:#5d3d26; --enc-wash:#251b14;
+    --dec:#83bdd4; --dec-soft:#29414c; --dec-wash:#152229;
+    --ok:#8fbf9a;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121413; --surface:#1a1d1b; --sunken:#232724; --rule:#333834;
+  --ink:#eceae4; --ink2:#a9afa7; --ink3:#79807a;
+  --enc:#e2a06a; --enc-soft:#5d3d26; --enc-wash:#251b14;
+  --dec:#83bdd4; --dec-soft:#29414c; --dec-wash:#152229;
+  --ok:#8fbf9a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1240px;margin:0 auto;padding:28px 22px 90px}
+h1{font-size:23px;line-height:1.25;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:15px;margin:0 0 2px;letter-spacing:.01em}
+h3{font-size:13px;margin:0 0 6px;color:var(--ink2);font-weight:600;letter-spacing:.03em;text-transform:none}
+p{margin:0 0 10px}
+.lead{color:var(--ink2);max-width:96ch}
+.small{font-size:12.5px;color:var(--ink3)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.cap{font-size:12px;color:var(--ink3);margin-top:8px}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0}
+.badge{font-size:12px;font-family:var(--mono);color:var(--ink2);background:var(--surface);
+  border:1px solid var(--rule);border-radius:2px;padding:3px 7px}
+.badge b{color:var(--ink);font-weight:600}
+header{border-bottom:1px solid var(--rule);padding-bottom:18px;margin-bottom:18px}
+.toolbar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:var(--surface);
+  border:1px solid var(--rule);border-radius:3px;padding:10px 12px;margin-bottom:14px}
+.seg{display:flex;border:1px solid var(--rule);border-radius:2px;overflow:hidden}
+.seg button{appearance:none;border:0;background:transparent;color:var(--ink2);font:inherit;
+  font-size:13px;padding:5px 11px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button[aria-pressed="true"]{background:var(--sunken);color:var(--ink);font-weight:600}
+.tb-lab{font-size:12px;color:var(--ink3);margin-right:-8px}
+input[type=range]{width:190px;accent-color:var(--enc)}
+.enc-mode input[type=range]{accent-color:var(--enc)}
+.dec-mode input[type=range]{accent-color:var(--dec)}
+label.chk{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink2);cursor:pointer}
+button.ghost{appearance:none;background:transparent;border:1px solid var(--rule);border-radius:2px;
+  color:var(--ink2);font:inherit;font-size:13px;padding:4px 10px;cursor:pointer}
+button.ghost:hover{background:var(--sunken);color:var(--ink)}
+.stages{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 16px}
+.chip{appearance:none;font:inherit;font-size:11.5px;font-family:var(--mono);cursor:pointer;
+  background:var(--surface);border:1px solid var(--rule);border-radius:2px;padding:4px 7px;color:var(--ink2);
+  display:flex;flex-direction:column;align-items:flex-start;line-height:1.25;min-width:62px}
+.chip small{color:var(--ink3);font-size:10.5px}
+.chip[aria-current="true"]{border-color:currentColor;font-weight:600}
+.enc-mode .chip[aria-current="true"]{color:var(--enc);background:var(--enc-wash)}
+.dec-mode .chip[aria-current="true"]{color:var(--dec);background:var(--dec-wash)}
+.chip.attn small{color:var(--ink)}
+.main{display:grid;grid-template-columns:minmax(320px,1fr) minmax(300px,380px);gap:18px;align-items:start}
+@media (max-width:900px){.main{grid-template-columns:1fr}}
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:3px;padding:12px 13px}
+.panel+section{margin-top:16px}
+.cv-wrap{position:relative}
+canvas.view{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:2px;
+  background:var(--sunken);cursor:crosshair;touch-action:none}
+.legend{display:flex;gap:10px;align-items:center;margin-top:9px;flex-wrap:wrap}
+.cbar{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink3);font-family:var(--mono)}
+.cbar canvas{width:110px;height:9px;border:1px solid var(--rule);border-radius:1px;display:block}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px;margin:0}
+.kv dt{color:var(--ink3)}
+.kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.kv dd em{font-style:normal;color:var(--ink3);font-size:11.5px}
+.anchor-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;width:100%;max-width:240px}
+.anchor-grid button{aspect-ratio:1;border:1px solid var(--rule);background:var(--sunken);border-radius:1px;
+  cursor:pointer;padding:0;font:inherit;font-size:10px;color:var(--ink3);font-family:var(--mono)}
+.anchor-grid button[aria-current="true"]{outline:2px solid currentColor;outline-offset:-2px}
+.enc-mode .anchor-grid button[aria-current="true"]{color:var(--enc)}
+.dec-mode .anchor-grid button[aria-current="true"]{color:var(--dec)}
+.chart{width:100%;height:auto;display:block;overflow:visible}
+.chart text{font-family:var(--mono);font-size:9.5px;fill:var(--ink3)}
+.chart .ax{stroke:var(--rule);stroke-width:1}
+.chart .grid{stroke:var(--rule);stroke-width:.6;stroke-dasharray:2 3;opacity:.7}
+.chart .lbl{font-family:var(--sans);font-size:10.5px;fill:var(--ink2)}
+.chart .ttl{font-family:var(--sans);font-size:12px;fill:var(--ink);font-weight:600}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+details{border-top:1px solid var(--rule);padding-top:10px;margin-top:12px}
+summary{cursor:pointer;font-size:13px;color:var(--ink2)}
+table{border-collapse:collapse;font-size:12.5px;width:100%;margin-top:8px}
+th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--rule);font-family:var(--mono)}
+th{color:var(--ink3);font-weight:500;font-family:var(--sans)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+ul{margin:6px 0 10px;padding-left:20px}
+li{margin:2px 0}
+code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px 4px;border-radius:2px}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--rule);
+  border-radius:2px;padding:4px 7px;font-family:var(--mono);font-size:11px;color:var(--ink);white-space:nowrap;
+  transform:translate(-50%,-135%);opacity:0;transition:opacity .08s}
+.note{border-left:2px solid var(--rule);padding-left:10px;color:var(--ink2);font-size:13px}
+.enc-mode .note{border-color:var(--enc-soft)}
+.dec-mode .note{border-color:var(--dec-soft)}
+</style>
+</head>
+<body class="enc-mode">
+<div class="wrap">
+
+<header>
+  <h1>Wan2.2 VAE：latent 与像素之间的视野、相关性与冗余度浏览器</h1>
+  <p class="lead">把一个 latent 单元“看到”的像素范围、以及范围内每个像素的重要程度，逐层展开。
+     空间口径为单帧（T=1）；图像 128×128 px → patchify 2×2 → 64×64×12 → 编码器 → 8×8×48 latent → 解码器 → 64×64×3 → unpatchify → 128×128 px。
+     编码 4×16×16（时间 4×，patch 2× · 卷积 8×），latent 48 通道。</p>
+  <div class="badges" id="badges"></div>
+</header>
+
+<div class="toolbar">
+  <div class="seg" id="dirseg">
+    <button data-dir="enc" aria-pressed="true">编码 · 感受野</button>
+    <button data-dir="dec" aria-pressed="false">解码 · 影响域</button>
+  </div>
+  <span class="tb-lab">阶段</span>
+  <button class="ghost" id="prev">◀</button>
+  <input type="range" id="stage" min="0" max="8" step="1" value="8">
+  <button class="ghost" id="next">▶</button>
+  <button class="ghost" id="play">播放</button>
+  <label class="chk"><input type="checkbox" id="ovl"> 叠加相邻单元</label>
+  <label class="chk"><input type="checkbox" id="dif"> 差分（独有部分）</label>
+  <span class="tb-lab">显示</span>
+  <div class="seg" id="scaleseg">
+    <button data-scale="gamma" aria-pressed="true">γ 0.45</button>
+    <button data-scale="linear" aria-pressed="false">线性</button>
+    <button data-scale="log" aria-pressed="false">对数</button>
+  </div>
+  <span class="tb-lab">支撑阈值</span>
+  <input type="range" id="thr" min="1" max="50" step="1" value="2" style="width:110px">
+  <span class="mono small" id="thrlab">0.2%</span>
+  <button class="ghost" id="theme" style="margin-left:auto">深色</button>
+</div>
+
+<div class="stages" id="stages"></div>
+
+<div class="main">
+  <section class="panel">
+    <div class="cv-wrap">
+      <canvas class="view" id="view" width="640" height="640"></canvas>
+      <div class="tip" id="tip"></div>
+    </div>
+    <div class="legend">
+      <span class="cbar"><span>0</span><canvas id="cbar" width="220" height="18"></canvas><span>峰值</span></span>
+      <span class="small" id="legendnote"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3 id="anchorTitle">锚点：latent 单元</h3>
+    <div class="anchor-grid" id="anchorGrid"></div>
+    <p class="small" style="margin:8px 0 12px">点击选择锚点单元（8×8 = 64 个）。</p>
+    <dl class="kv" id="kv"></dl>
+    <p class="cap" id="kvcap"></p>
+  </section>
+</div>
+
+<div class="cols" style="margin-top:16px">
+  <section class="panel">
+    <h2>① 视野随深度增长</h2>
+    <p class="small">同一个图像位置上的单元，随着层数加深，其感受野半径（px）。</p>
+    <svg class="chart" id="growth" viewBox="0 0 420 210"></svg>
+    <p class="cap" id="growthcap"></p>
+  </section>
+  <section class="panel">
+    <h2>② 相关性剖面：中心强、边缘弱</h2>
+    <p class="small">以质心为原点的径向平均强度（归一化到峰值 = 1）。</p>
+    <svg class="chart" id="radial" viewBox="0 0 420 210"></svg>
+    <p class="cap" id="radialcap"></p>
+  </section>
+</div>
+
+<div class="cols" style="margin-top:16px">
+  <section class="panel">
+    <h2>③ 邻近 latent 的冗余度</h2>
+    <p class="small">不同 latent 单元感受野之间的余弦相似度：越接近 1，两个 latent 携带的信息越重复。</p>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start">
+      <div><div class="anchor-grid" id="simGrid" style="max-width:180px"></div>
+        <p class="cap" style="margin-top:6px">与锚点的余弦相似度</p></div>
+      <div><svg class="chart" id="ring" viewBox="0 0 240 190"></svg></div>
+    </div>
+    <p class="cap" id="simcap"></p>
+  </section>
+  <section class="panel">
+    <h2>④ 空间之外：时间维的感受野</h2>
+    <p class="small">因果 3D 卷积（时间核 3，两次时间下采样）累积的理论时间感受野，单位：输入帧。</p>
+    <svg class="chart" id="temporal" viewBox="0 0 420 180"></svg>
+    <p class="cap" id="tempcap"></p>
+  </section>
+</div>
+
+<section class="panel" style="margin-top:16px">
+  <h2>⑤ 方法与口径</h2>
+  <div class="cols">
+    <div>
+      <h3>量是什么</h3>
+      <ul>
+        <li><b>编码方向</b>：固定最深层的一个单元（latent 单元），反向传播到输入像素，得到该单元的<b>有效感受野</b>（ERF）强度分布。每一层都可以给出「该层单元 → 输入像素」的分布，于是能看到视野逐层变大。</li>
+        <li><b>解码方向</b>：固定一个 latent 单元，向前传播得到它对输出像素的<b>影响域</b>；反过来固定一个输出像素，反向传播得到它依赖的 latent 集合（逐步收缩）。</li>
+        <li><b>强度</b>用<b>路径计数</b>（把每个卷积、每条残差/捷径支路都按等权线性化）计算，因此只依赖网络几何（核大小、步长、填充、支路结构），与训练权重无关。</li>
+        <li>注意力块按<b>均匀混合</b>处理（残差 + 全图平均），这是权重无关口径下唯一自然的选择；它会在局部 blob 之外加一层很低的全局底噪。</li>
+      </ul>
+      <h3>为什么不用“理论感受野”</h3>
+      <p>理论感受野（支撑集）在第三个下采样块之后就已经覆盖整幅 128 px，之后一直是 100%；真正在变化、也真正决定“中心强、边缘弱、邻近高度相似”的是<b>有效</b>感受野。所以本页同时给出支撑范围（阈值轮廓）和 σ / r50 / r90 这几个有效半径。</p>
+    </div>
+    <div>
+      <h3>验证</h3>
+      <p class="small" id="valtext"></p>
+      <table id="valtable"></table>
+      <h3 style="margin-top:12px">用真实权重复现</h3>
+      <p class="small">几何口径与权重无关；上表 autograd 列的权重来源：<b><span id="wsrc">随机初始化（seed 0）</span></b>。把训练好的 VAE 目录接上即可得到真实曲线，几何部分会按 checkpoint 的 patch_size 与残差块结构自动重建：</p>
+      <p><code>python probe_rf.py --vae-path /path/to/pretrained/model/vae</code></p>
+      <p class="small">脚本位于本仓库根目录：<code>probe_rf.py</code>（几何 DP + autograd 验证）、<code>rf_engine.js</code>（浏览器里的同一套几何，已与 Python 逐步对拍，最大相对误差 3.4e-16）、<code>test_engine.js</code>（对拍脚本）。</p>
+      <h3>编码/解码的层清单</h3>
+      <p class="small" id="opinventory"></p>
+    </div>
+  </div>
+</section>
+
+<p class="cap" id="srccap"></p>
+</div>
+
+<script id="rf-data" type="application/json">{"image":128,"patch":2,"patch_grid":64,"grid":8,"ops_enc":[{"dir":"Op","name":"conv_in","kind":"conv","gin":[64,64],"gout":[64,64],"p":{"k":3,"s":1,"pad":1}},{"dir":"Op","name":"down0","kind":"resdown","gin":[64,64],"gout":[32,32],"p":{"nres":2,"downsample":true,"shortcut":true,"fs":2,"weight":0.125,"scale":1.0}},{"dir":"Op","name":"down1","kind":"resdown","gin":[32,32],"gout":[16,16],"p":{"nres":2,"downsample":true,"shortcut":true,"fs":2,"weight":0.25,"scale":1.0}},{"dir":"Op","name":"down2","kind":"resdown","gin":[16,16],"gout":[8,8],"p":{"nres":2,"downsample":true,"shortcut":true,"fs":2,"weight":0.5,"scale":1.0}},{"dir":"Op","name":"down3","kind":"resdown","gin":[8,8],"gout":[8,8],"p":{"nres":2,"downsample":false,"shortcut":true,"fs":1,"weight":1.0,"scale":1.0}},{"dir":"Op","name":"mid_res0","kind":"res","gin":[8,8],"gout":[8,8],"p":{"scale":1.0}},{"dir":"Op","name":"mid_attn","kind":"attn","gin":[8,8],"gout":[8,8],"p":{}},{"dir":"Op","name":"mid_res1","kind":"res","gin":[8,8],"gout":[8,8],"p":{"scale":1.0}},{"dir":"Op","name":"conv_out","kind":"conv","gin":[8,8],"gout":[8,8],"p":{"k":3,"s":1,"pad":1}}],"ops_dec":[{"dir":"dec","name":"conv_in","kind":"conv","gin":[8,8],"gout":[8,8],"p":{"k":3,"s":1,"pad":1}},{"dir":"dec","name":"mid_res0","kind":"res","gin":[8,8],"gout":[8,8],"p":{"scale":1.0}},{"dir":"dec","name":"mid_attn","kind":"attn","gin":[8,8],"gout":[8,8],"p":{}},{"dir":"dec","name":"mid_res1","kind":"res","gin":[8,8],"gout":[8,8],"p":{"scale":1.0}},{"dir":"dec","name":"up0","kind":"resup","gin":[8,8],"gout":[16,16],"p":{"nres":3,"upsample":true,"shortcut":true,"fs":2,"scale":1.0}},{"dir":"dec","name":"up1","kind":"resup","gin":[16,16],"gout":[32,32],"p":{"nres":3,"upsample":true,"shortcut":true,"fs":2,"scale":1.0}},{"dir":"dec","name":"up2","kind":"resup","gin":[32,32],"gout":[64,64],"p":{"nres":3,"upsample":true,"shortcut":true,"fs":2,"scale":1.0}},{"dir":"dec","name":"up3","kind":"resup","gin":[64,64],"gout":[64,64],"p":{"nres":3,"upsample":false,"shortcut":false,"fs":1,"scale":1.0}},{"dir":"dec","name":"conv_out","kind":"conv","gin":[64,64],"gout":[64,64],"p":{"k":3,"s":1,"pad":1}}],"validation":{"cosine_enc":0.9418872138416319,"cosine_dec":0.8058928903696773,"cosine_dep":0.9579697112406813,"enc_autograd":{"label":"autograd","total":1057.8005521818995,"peak":0.34161287546157837,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":73.87308731771418,"cx":74.21697784546647,"sigma":28.28287768179526,"r50":34.35955697909656,"r90":59.9037637066856,"peak_frac":5.29115374350839},"enc_dp":{"label":"geometry","total":2.877375931213035e+27,"peak":3.901985015023204e+23,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":69.41441036296955,"cx":69.41441036296955,"sigma":29.160435993011408,"r50":37.83632054913852,"r90":59.38249401297721,"peak_frac":2.221820297884702},"dec_perturb":{"label":"perturb","total":966.4093389604241,"peak":0.5383200645446777,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":69.41660868107533,"cx":71.00396859901431,"sigma":28.491983836801907,"r50":33.63180879979457,"r90":61.44903549477452,"peak_frac":9.12639766808088},"dec_dp":{"label":"geometry","total":7.508879407931972e+33,"peak":9.922071278321842e+29,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":64.7264025660943,"cx":64.7264025660943,"sigma":29.271084698289908,"r50":38.12142144324235,"r90":59.586633443583864,"peak_frac":2.164946418666707},"enc_rows":[{"idx":0,"name":"conv_in","grid":[64,64],"jump":2,"dp":{"label":"","total":36.0,"peak":1.0,"extent":[6,6],"area1e3":36,"area_frac":0.002197265625,"cy":72.5,"cx":72.5,"sigma":1.707825127659933,"r50":2.5495097567963922,"r90":3.5355339059327378,"peak_frac":455.1111111111111},"autograd":{"label":"","total":138.04174327850342,"peak":4.837095737457275,"extent":[6,6],"area1e3":36,"area_frac":0.002197265625,"cy":72.50691416201532,"cx":72.71738166385589,"sigma":1.6776098767774923,"r50":2.338227627104129,"r90":3.3802105650478467,"peak_frac":574.1087781151006},"cosine":0.9834899151235204},{"idx":1,"name":"down0","grid":[32,32],"jump":4,"dp":{"label":"","total":8503074.0,"peak":79524.5,"extent":[26,26],"area1e3":628,"area_frac":0.038330078125,"cy":74.49999788311851,"cx":74.49999788311851,"sigma":4.031125898390164,"r50":4.7434178290867335,"r90":8.631336534029252,"peak_frac":153.23039738334631},"autograd":{"label":"","total":281.75366800650954,"peak":3.701690912246704,"extent":[26,26],"area1e3":664,"area_frac":0.04052734375,"cy":74.31187396281972,"cx":74.61395410515304,"sigma":4.158967205410268,"r50":4.6244824416515495,"r90":9.097784288367562,"peak_frac":215.2536445589372},"cosine":0.9651010520038662},{"idx":2,"name":"down1","grid":[16,16],"jump":8,"dp":{"label":"","total":2008400569578.0,"peak":4398937141.625,"extent":[66,66],"area1e3":2788,"area_frac":0.170166015625,"cy":78.49998941561046,"cx":78.49998941561046,"sigma":8.341649561792378,"r50":9.924717687118518,"r90":17.734153819340097,"peak_frac":35.88536431431486},"autograd":{"label":"","total":678.0285919475082,"peak":2.049139976501465,"extent":[66,66],"area1e3":3236,"area_frac":0.197509765625,"cy":78.10911585766331,"cx":78.22688103604484,"sigma":8.992750172681758,"r50":10.191715528213768,"r90":19.7769190968818,"peak_frac":49.51577230477498},"cosine":0.9705392930586408},{"idx":3,"name":"down2","grid":[8,8],"jump":16,"dp":{"label":"","total":4.7299621853553024e+17,"peak":255450324513754.7,"extent":[122,122],"area1e3":10284,"area_frac":0.627685546875,"cy":78.42577384229679,"cx":78.42577384229678,"sigma":16.71934712017017,"r50":20.0166851370639,"r90":35.714845446296145,"peak_frac":8.848481135413069},"autograd":{"label":"","total":2174.9935046788546,"peak":2.835212230682373,"extent":[122,122],"area1e3":11164,"area_frac":0.681396484375,"cy":77.38688170463666,"cx":77.18718468450163,"sigma":17.943378570884708,"r50":20.287466431741652,"r90":39.8454817260479,"peak_frac":21.357359039267024},"cosine":0.9508398316897942},{"idx":4,"name":"down3","grid":[8,8],"jump":16,"dp":{"label":"","total":1.0339650088114976e+22,"peak":1.9519146491448607e+18,"extent":[128,128],"area1e3":16344,"area_frac":0.99755859375,"cy":74.17182884861153,"cx":74.17182884861153,"sigma":26.368930493126555,"r50":33.18132091722622,"r90":54.578176396729724,"peak_frac":3.0929643981230424},"autograd":{"label":"","total":6666.935983346775,"peak":5.9294633865356445,"extent":[128,128],"area1e3":16376,"area_frac":0.99951171875,"cy":75.19632235273828,"cx":74.90008630535657,"sigma":24.440502335507514,"r50":27.47454499538221,"r90":53.83591603080894,"peak_frac":14.571660560063144},"cosine":0.8983967352051242},{"idx":5,"name":"mid_res0","grid":[8,8],"jump":16,"dp":{"label":"","total":1.4638812026537956e+24,"peak":2.3591421556792358e+20,"extent":[128,128],"area1e3":16380,"area_frac":0.999755859375,"cy":72.398657232955,"cx":72.398657232955,"sigma":27.840906567402747,"r50":35.54622298336793,"r90":57.331612175029015,"peak_frac":2.640390832847503},"autograd":{"label":"","total":7467.176943799481,"peak":5.585659503936768,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":74.85776534260893,"cx":74.80579703735062,"sigma":25.33918712127488,"r50":29.03400683914776,"r90":55.33036526411356,"peak_frac":12.255695291711504},"cosine":0.8939156042627467},{"idx":6,"name":"mid_attn","grid":[8,8],"jump":16,"dp":{"label":"","total":2.2663588968317913e+24,"peak":3.3395372125924144e+20,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":70.67388938288049,"cx":70.67388938288049,"sigma":28.585059643356637,"r50":36.799614235501146,"r90":58.54274308062432,"peak_frac":2.4142238798807094},"autograd":{"label":"","total":7579.5812176428735,"peak":5.582197189331055,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":74.44432819995758,"cx":74.42868245042526,"sigma":25.831283750714466,"r50":29.522868400101284,"r90":56.5426760253827,"peak_frac":12.066460682169744},"cosine":0.879823338603466},{"idx":7,"name":"mid_res1","grid":[8,8],"jump":16,"dp":{"label":"","total":3.347539810183212e+26,"peak":4.627289599883744e+22,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":69.75935746622862,"cx":69.75935746622862,"sigma":29.03225722724792,"r50":37.64594932924619,"r90":59.15725816158679,"peak_frac":2.2647531352389194},"autograd":{"label":"","total":8282.750338718295,"peak":5.490105152130127,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":74.32531411150462,"cx":74.17506171192358,"sigma":26.434406076428502,"r50":30.740406423190674,"r90":57.53958042733599,"peak_frac":10.85990512016558},"cosine":0.8824744521748108},{"idx":8,"name":"conv_out","grid":[8,8],"jump":16,"dp":{"label":"","total":2.877375931213035e+27,"peak":3.901985015023204e+23,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":69.41441036296955,"cx":69.41441036296955,"sigma":29.160435993011408,"r50":37.83632054913852,"r90":59.38249401297721,"peak_frac":2.221820297884702},"autograd":{"label":"","total":1057.8005521818995,"peak":0.34161287546157837,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":73.87308731771418,"cx":74.21697784546647,"sigma":28.28287768179526,"r50":34.35955697909656,"r90":59.9037637066856,"peak_frac":5.29115374350839},"cosine":0.9418872138416319}],"dec_rows":[{"idx":0,"name":"conv_in","grid":[8,8],"jump":16,"dp":{"label":"","total":2304.0,"peak":1.0,"extent":[48,48],"area1e3":2304,"area_frac":0.140625,"cy":71.5,"cx":71.5,"sigma":13.853399101544236,"r50":19.091883092036785,"r90":26.767517628648346,"peak_frac":7.111111111111111}},{"idx":1,"name":"mid_res0","grid":[8,8],"jump":16,"dp":{"label":"","total":188928.0,"peak":50.0,"extent":[112,112],"area1e3":12544,"area_frac":0.765625,"cy":71.5,"cx":71.5,"sigma":23.00189988618296,"r50":27.721832551258224,"r90":49.563091106185055,"peak_frac":4.336043360433604}},{"idx":2,"name":"mid_attn","grid":[8,8],"jump":16,"dp":{"label":"","total":377856.0,"peak":61.53125,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":67.5,"cx":67.5,"sigma":31.034959306997518,"r50":38.242646351945886,"r90":65.89764790946639,"peak_frac":2.668021680216802}},{"idx":3,"name":"mid_res1","grid":[8,8],"jump":16,"dp":{"label":"","total":26049568.0,"peak":3645.5625,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":67.1072128336255,"cx":67.1072128336255,"sigma":30.417794067140473,"r50":38.860870369253156,"r90":62.95150870234546,"peak_frac":2.2928939167052595}},{"idx":4,"name":"up0","grid":[16,16],"jump":8,"dp":{"label":"","total":77297452109336.0,"peak":9674222258.0,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":65.205692580903,"cx":65.205692580903,"sigma":30.37140570267732,"r50":39.441138464885185,"r90":61.89458498484159,"peak_frac":2.050552161161442}},{"idx":5,"name":"up1","grid":[32,32],"jump":4,"dp":{"label":"","total":3.251091600596063e+20,"peak":4.1924869771348824e+16,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":64.842258058908,"cx":64.842258058908,"sigma":29.705574009275704,"r50":38.63384055588353,"r90":60.58245319442189,"peak_frac":2.112819787076568}},{"idx":6,"name":"up2","grid":[64,64],"jump":2,"dp":{"label":"","total":1.5364174347027895e+27,"peak":2.018057361225535e+23,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":64.75277439676556,"cx":64.75277439676556,"sigma":29.391832520667503,"r50":38.25469743506632,"r90":59.85894994441461,"peak_frac":2.152009672600153}},{"idx":7,"name":"up3","grid":[64,64],"jump":2,"dp":{"label":"","total":8.360419059119496e+32,"peak":1.103899463341234e+29,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":64.72994437629386,"cx":64.72994437629386,"sigma":29.2846439230888,"r50":38.13564934920867,"r90":59.62114062106317,"peak_frac":2.1633232352933747}},{"idx":8,"name":"conv_out","grid":[64,64],"jump":2,"dp":{"label":"","total":7.508879407931972e+33,"peak":9.922071278321842e+29,"extent":[128,128],"area1e3":16384,"area_frac":1.0,"cy":64.7264025660943,"cx":64.7264025660943,"sigma":29.271084698289908,"r50":38.12142144324235,"r90":59.586633443583864,"peak_frac":2.164946418666707}}],"radial":{"edges":[0.0,3.2,6.4,9.600000000000001,12.8,16.0,19.200000000000003,22.400000000000002,25.6,28.8,32.0,35.2,38.400000000000006,41.6,44.800000000000004,48.0,51.2,54.400000000000006,57.6,60.800000000000004,64.0],"rmax":64.0,"autograd":[0.20994526031427085,0.18810773025057753,0.17898926035788074,0.18237963165135662,0.17590591062245697,0.16762869519977597,0.15799477526119776,0.146214970808739,0.1258337412036442,0.11437753907529719,0.09539189580993765,0.087245948038416,0.07620562524890273,0.06907435705078431,0.0616230458631999,0.05514718718388064,0.047760883248870976,0.040991978951132726,0.0349809117924559,0.018301214318826933],"geometry":[3.822717953942621e+23,3.804039597440839e+23,3.760759759380204e+23,3.706118109458166e+23,3.6368536730908236e+23,3.5375983483309255e+23,3.4365561550026594e+23,3.3008223497041696e+23,3.163405182129277e+23,3.006247240299351e+23,2.8382056531983703e+23,2.656487809011406e+23,2.4495194897712606e+23,2.243469616534485e+23,2.0172889015253422e+23,1.7759542338274326e+23,1.51961960072838e+23,1.2248132349991776e+23,1.005745232050114e+23,4.956574103647592e+22]}},"temporal":{"rf":121.0,"stride":4.0,"curve":[["conv_in",3.0,1.0],["down0.res",5.0,1.0],["down0.res",7.0,1.0],["down0.res",9.0,1.0],["down0.res",11.0,1.0],["down0.ds",13.0,2.0],["down1.res",17.0,2.0],["down1.res",21.0,2.0],["down1.res",25.0,2.0],["down1.res",29.0,2.0],["down1.ds",33.0,4.0],["down2.res",41.0,4.0],["down2.res",49.0,4.0],["down2.res",57.0,4.0],["down2.res",65.0,4.0],["down3.res",73.0,4.0],["down3.res",81.0,4.0],["down3.res",89.0,4.0],["down3.res",97.0,4.0],["mid_res0",105.0,4.0],["mid_res1",113.0,4.0],["conv_out",121.0,4.0]]},"sim":[[0.9305621955994028,0.9354709623653322,0.9435879944911076,0.9522739182910185,0.9568855454290554,0.9564553602031227,0.9542669325009558,0.9527143896676697],[0.9354709623653327,0.9417315184414863,0.9516684719002764,0.9617699420625989,0.9665746428706274,0.9650833287804711,0.9613508338583244,0.9586204777880216],[0.9435879944911075,0.9516684719002765,0.9640329860901354,0.9760089217642035,0.9810702965174857,0.9781724696481767,0.972370510233184,0.9680424295734175],[0.9522739182910188,0.961769942062599,0.9760089217642034,0.989425830530141,0.9946906169431747,0.990717964665374,0.9833123630441363,0.9777306816248063],[0.9568855454290552,0.9665746428706274,0.9810702965174855,0.9946906169431746,1.0000000000000002,0.9958974958463321,0.9882758925787302,0.9825159625586449],[0.9564553602031225,0.9650833287804711,0.9781724696481766,0.9907179646653737,0.9958974958463319,0.9926231179000564,0.9861993813132527,0.98135804297852],[0.9542669325009555,0.9613508338583243,0.9723705102331837,0.9833123630441363,0.9882758925787304,0.9861993813132522,0.981511434811679,0.9779926074240648],[0.9527143896676696,0.9586204777880218,0.9680424295734171,0.9777306816248063,0.9825159625586447,0.9813580429785203,0.9779926074240648,0.9754696158460976]],"ring":{"0":1.0000000000000002,"1":0.9930826379174947,"2":0.9797727556937594,"3":0.9676089990469637,"4":0.948924826766395},"adjacent_sim":0.9958974958463321,"weights":"random-init (torch seed 0)"}</script>
+<script>/* Weight-free receptive-field / influence geometry for the Wan2.2 VAE.
+ *
+ * Mirrors .claude/scratch/rf/probe_rf.py exactly.  All fields are Float64
+ * row-major arrays wrapped as {h, w, a}; the same file runs in node (tests)
+ * and in the browser (visualisation).
+ */
+(function (root) {
+  'use strict';
+
+  function F(h, w) { return { h: h, w: w, a: new Float64Array(h * w) }; }
+  function at(f, i, j) { return f.a[i * f.w + j]; }
+  function set(f, i, j, v) { f.a[i * f.w + j] = v; }
+  function add(f, i, j, v) { f.a[i * f.w + j] += v; }
+  function copy(f) { return { h: f.h, w: f.w, a: f.a.slice() }; }
+  function scale(f, s) { const g = copy(f); for (let i = 0; i < g.a.length; i++) g.a[i] *= s; return g; }
+  function onehot(h, w, pi, pj) { const f = F(h, w); set(f, pi, pj, 1); return f; }
+
+  function convF(f, k, s, p, ho, wo) {
+    const out = F(ho, wo);
+    for (let i = 0; i < ho; i++) {
+      for (let j = 0; j < wo; j++) {
+        let acc = 0;
+        for (let di = 0; di < k; di++) {
+          const ii = i * s + di - p;
+          if (ii < 0 || ii >= f.h) continue;
+          for (let dj = 0; dj < k; dj++) {
+            const jj = j * s + dj - p;
+            if (jj < 0 || jj >= f.w) continue;
+            acc += at(f, ii, jj);
+          }
+        }
+        set(out, i, j, acc);
+      }
+    }
+    return out;
+  }
+
+  function convT(f, k, s, p, hin, win) {
+    const out = F(hin, win);
+    for (let i = 0; i < f.h; i++) {
+      for (let j = 0; j < f.w; j++) {
+        const v = at(f, i, j);
+        if (v === 0) continue;
+        for (let di = 0; di < k; di++) {
+          const ii = i * s + di - p;
+          if (ii < 0 || ii >= hin) continue;
+          for (let dj = 0; dj < k; dj++) {
+            const jj = j * s + dj - p;
+            if (jj < 0 || jj >= win) continue;
+            add(out, ii, jj, v);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  function blockSum(f, s) {
+    let h = f.h - (f.h % s), w = f.w - (f.w % s);
+    if (h === 0 || w === 0) {
+      const out = F(Math.max(h / s | 0, 1), Math.max(w / s | 0, 1));
+      let tot = 0; for (let i = 0; i < f.a.length; i++) tot += f.a[i];
+      out.a.fill(tot); return out;
+    }
+    const out = F(h / s, w / s);
+    for (let i = 0; i < h; i++) for (let j = 0; j < w; j++)
+      add(out, (i / s) | 0, (j / s) | 0, at(f, i, j));
+    return out;
+  }
+
+  function blockRepeat(f, s) {
+    const out = F(f.h * s, f.w * s);
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) {
+      const v = at(f, i, j);
+      for (let di = 0; di < s; di++) for (let dj = 0; dj < s; dj++)
+        set(out, i * s + di, j * s + dj, v);
+    }
+    return out;
+  }
+
+  function fit(f, h, w) {
+    const out = F(h, w);
+    const hh = Math.min(h, f.h), ww = Math.min(w, f.w);
+    for (let i = 0; i < hh; i++) for (let j = 0; j < ww; j++) set(out, i, j, at(f, i, j));
+    return out;
+  }
+
+  function resblockF(f, sc) {
+    let g = convF(f, 3, 1, 1, f.h, f.w);
+    g = convF(g, 3, 1, 1, g.h, g.w);
+    const out = copy(g);
+    for (let i = 0; i < out.a.length; i++) out.a[i] += sc * f.a[i];
+    return out;
+  }
+
+  function resblockT(f, sc) {
+    let g = copy(f);
+    for (let i = 0; i < g.a.length; i++) g.a[i] *= (1 + sc);
+    g = convT(g, 3, 1, 1, g.h, g.w);
+    return convT(g, 3, 1, 1, g.h, g.w);
+  }
+
+  function zeropadConvT(f, hin, win) {
+    const g = convT(f, 3, 2, 0, hin + 1, win + 1);
+    return fit(g, hin, win);
+  }
+
+  function zeropadConvF(f, ho, wo) {
+    const padded = F(f.h + 1, f.w + 1);
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) set(padded, i, j, at(f, i, j));
+    return convF(padded, 3, 2, 0, ho, wo);
+  }
+
+  function avgdownT(f, fs, weight, gin, win) {
+    const out = F(gin, win);
+    for (let oi = 0; oi < f.h; oi++) for (let oj = 0; oj < f.w; oj++) {
+      const v = at(f, oi, oj) * weight;
+      if (v === 0) continue;
+      for (let di = 0; di < fs; di++) {
+        const ii = oi * fs + di;
+        if (ii >= gin) break;
+        for (let dj = 0; dj < fs; dj++) {
+          const jj = oj * fs + dj;
+          if (jj < win) add(out, ii, jj, v);
+        }
+      }
+    }
+    return out;
+  }
+
+  function avgdownF(f, fs, weight, gh, gw) {
+    const out = F(gh, gw);
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) {
+      const oi = (i / fs) | 0, oj = (j / fs) | 0;
+      if (oi < gh && oj < gw) add(out, oi, oj, at(f, i, j) * weight);
+    }
+    return out;
+  }
+
+  function attnMix(f) {
+    let tot = 0; for (let i = 0; i < f.a.length; i++) tot += f.a[i];
+    const m = tot / f.a.length, out = copy(f);
+    for (let i = 0; i < out.a.length; i++) out.a[i] += m;
+    return out;
+  }
+
+  /* ---------------- op level ---------------- */
+  function opForward(op, f) {
+    const p = op.p, k = op.kind;
+    if (k === 'conv') return convF(f, p.k, p.s, p.pad, op.gout[0], op.gout[1]);
+    if (k === 'attn') return attnMix(f);
+    if (k === 'res') return resblockF(f, p.scale === undefined ? 1 : p.scale);
+    if (k === 'resup') {
+      let out = f;
+      const nres = p.nres;
+      for (let r = 0; r < nres; r++) out = resblockF(out, p.scale === undefined ? 1 : p.scale);
+      if (p.upsample) out = convF(blockRepeat(out, 2), 3, 1, 1, op.gout[0], op.gout[1]);
+      if (p.shortcut) {
+        const sc = fit(blockRepeat(f, p.fs), op.gout[0], op.gout[1]);
+        out = fit(out, op.gout[0], op.gout[1]);
+        for (let i = 0; i < out.a.length; i++) out.a[i] += sc.a[i];
+      }
+      return fit(out, op.gout[0], op.gout[1]);
+    }
+    if (k === 'resdown') {
+      let out = f;
+      for (let r = 0; r < p.nres; r++) out = resblockF(out, p.scale === undefined ? 1 : p.scale);
+      if (p.downsample) out = zeropadConvF(out, op.gout[0], op.gout[1]);
+      if (p.shortcut) {
+        const sc = avgdownF(f, p.fs, p.weight, op.gout[0], op.gout[1]);
+        out = fit(out, op.gout[0], op.gout[1]);
+        for (let i = 0; i < out.a.length; i++) out.a[i] += sc.a[i];
+      }
+      return fit(out, op.gout[0], op.gout[1]);
+    }
+    throw new Error('bad kind ' + k);
+  }
+
+  function opBackward(op, f) {
+    const p = op.p, k = op.kind;
+    if (k === 'conv') return convT(f, p.k, p.s, p.pad, op.gin[0], op.gin[1]);
+    if (k === 'attn') return attnMix(f);
+    if (k === 'res') return resblockT(f, p.scale === undefined ? 1 : p.scale);
+    if (k === 'resup') {
+      let m = f;
+      for (let r = 0; r < p.nres; r++) m = resblockT(m, p.scale === undefined ? 1 : p.scale);
+      if (p.upsample) {
+        m = convT(m, 3, 1, 1, op.gin[0] * 2, op.gin[1] * 2);
+        m = blockSum(m, 2);
+      }
+      const out = fit(m, op.gin[0], op.gin[1]);
+      if (p.shortcut) {
+        const sc = blockSum(fit(f, op.gout[0], op.gout[1]), p.fs);
+        const s2 = fit(sc, op.gin[0], op.gin[1]);
+        for (let i = 0; i < out.a.length; i++) out.a[i] += s2.a[i];
+      }
+      return out;
+    }
+    if (k === 'resdown') {
+      let m = f;
+      if (p.downsample) m = zeropadConvT(m, m.h * 2, m.w * 2);
+      for (let r = 0; r < p.nres; r++) m = resblockT(m, p.scale === undefined ? 1 : p.scale);
+      const out = fit(m, op.gin[0], op.gin[1]);
+      if (p.shortcut) {
+        const sc = avgdownT(f, p.fs, p.weight, op.gin[0], op.gin[1]);
+        for (let i = 0; i < out.a.length; i++) out.a[i] += sc.a[i];
+      }
+      return out;
+    }
+    throw new Error('bad kind ' + k);
+  }
+
+  /* ---------------- query helpers ---------------- */
+  function stageTarget(grid, r, c, GRID) {
+    const v0 = Math.floor((r + 0.5) * grid[0] / GRID - 0.5 + 0.5);
+    const v1 = Math.floor((c + 0.5) * grid[1] / GRID - 0.5 + 0.5);
+    return [Math.min(Math.max(v0, 0), grid[0] - 1), Math.min(Math.max(v1, 0), grid[1] - 1)];
+  }
+
+  /* encoder: RF (in image pixels) of the unit at the output of ops[si] */
+  function rfAtStage(encOps, si, r, c, GRID, patch) {
+    const op = encOps[si];
+    const t = stageTarget(op.gout, r, c, GRID);
+    let f = onehot(op.gout[0], op.gout[1], t[0], t[1]);
+    for (let k = si; k >= 0; k--) f = opBackward(encOps[k], f);
+    return blockRepeat(f, patch);            // patch grid -> image pixels
+  }
+
+  /* RF of the input pixel itself (baseline) */
+  function rfOfPixel(r, c, GRID, patch) {
+    return onehot(GRID * patch, GRID * patch, r * patch, c * patch);
+  }
+
+  function influenceAt(decOps, si, r, c, IMG) {
+    let f = onehot(decOps[0].gin[0], decOps[0].gin[1], r, c);
+    for (let k = 0; k <= si; k++) f = opForward(decOps[k], f);
+    const g = decOps[si].gout[0];
+    return blockRepeat(f, Math.round(IMG / g));
+  }
+
+  /* decoder: dependency of image pixel (pi,pj) on the latent grid */
+  function dependencyAt(decOps, pi, pj) {
+    const gout = decOps[decOps.length - 1].gout;
+    let f = onehot(gout[0], gout[1], pi, pj);
+    for (let k = decOps.length - 1; k >= 0; k--) f = opBackward(decOps[k], f);
+    return f;
+  }
+
+  /* ---------------- statistics ---------------- */
+  function total(f) { let t = 0; for (let i = 0; i < f.a.length; i++) t += f.a[i]; return t; }
+
+  function summary(f) {
+    const tot = total(f);
+    if (tot <= 0) return { total: 0 };
+    let peak = 0;
+    for (let i = 0; i < f.a.length; i++) if (f.a[i] > peak) peak = f.a[i];
+    let cy = 0, cx = 0;
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) {
+      const v = at(f, i, j); cy += v * i; cx += v * j;
+    }
+    cy /= tot; cx /= tot;
+    let vy = 0, vx = 0;
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) {
+      const v = at(f, i, j);
+      vy += v * (i - cy) * (i - cy); vx += v * (j - cx) * (j - cx);
+    }
+    vy /= tot; vx /= tot;
+    const sigma = Math.sqrt((vy + vx) / 2);
+    // radii by mass
+    const dists = [], vals = [];
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) {
+      dists.push(Math.hypot(i - cy, j - cx)); vals.push(at(f, i, j));
+    }
+    const order = dists.map((d, i) => i).sort((a, b) => dists[a] - dists[b]);
+    let cum = 0, r50 = 0, r90 = 0, r99 = 0;
+    for (let n = 0; n < order.length; n++) {
+      cum += vals[order[n]] / tot;
+      if (r50 === 0 && cum >= 0.5) r50 = dists[order[n]];
+      if (r90 === 0 && cum >= 0.9) r90 = dists[order[n]];
+      if (r99 === 0 && cum >= 0.99) r99 = dists[order[n]];
+    }
+    let area = 0, minI = f.h, maxI = -1, minJ = f.w, maxJ = -1;
+    const thr = peak * 1e-3;
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) {
+      if (at(f, i, j) > thr) {
+        area++;
+        if (i < minI) minI = i; if (i > maxI) maxI = i;
+        if (j < minJ) minJ = j; if (j > maxJ) maxJ = j;
+      }
+    }
+    return {
+      total: tot, peak: peak, cy: cy, cx: cx, sigma: sigma,
+      r50: r50, r90: r90, r99: r99,
+      area: area, areaFrac: area / (f.h * f.w),
+      extent: maxI < 0 ? [0, 0] : [maxI - minI + 1, maxJ - minJ + 1],
+      centre: peak / tot * f.a.length,
+    };
+  }
+
+  function cosine(a, b) {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.a.length; i++) {
+      dot += a.a[i] * b.a[i]; na += a.a[i] * a.a[i]; nb += b.a[i] * b.a[i];
+    }
+    if (na === 0 || nb === 0) return 0;
+    return dot / Math.sqrt(na * nb);
+  }
+
+  function radial(f, cy, cx, nbins, rmax) {
+    const prof = new Float64Array(nbins), cnt = new Float64Array(nbins);
+    rmax = rmax || Math.hypot(Math.max(cy, f.h - 1 - cy), Math.max(cx, f.w - 1 - cx));
+    for (let i = 0; i < f.h; i++) for (let j = 0; j < f.w; j++) {
+      const d = Math.hypot(i - cy, j - cx);
+      let bin = Math.floor(d / rmax * nbins);
+      if (bin >= nbins) bin = nbins - 1;
+      prof[bin] += at(f, i, j); cnt[bin] += 1;
+    }
+    for (let b = 0; b < nbins; b++) if (cnt[b] > 0) prof[b] /= cnt[b];
+    return prof;
+  }
+
+  function normalise(f) {
+    let m = 0; for (let i = 0; i < f.a.length; i++) if (f.a[i] > m) m = f.a[i];
+    const out = copy(f);
+    if (m > 0) for (let i = 0; i < out.a.length; i++) out.a[i] /= m;
+    return out;
+  }
+
+  root.RF = {
+    F: F, at: at, set: set, copy: copy, onehot: onehot, scale: scale,
+    convF: convF, convT: convT, blockSum: blockSum, blockRepeat: blockRepeat, fit: fit,
+    resblockF: resblockF, resblockT: resblockT, zeropadConvF: zeropadConvF, zeropadConvT: zeropadConvT,
+    avgdownF: avgdownF, avgdownT: avgdownT, attnMix: attnMix,
+    opForward: opForward, opBackward: opBackward,
+    stageTarget: stageTarget, rfAtStage: rfAtStage, rfOfPixel: rfOfPixel,
+    influenceAt: influenceAt, dependencyAt: dependencyAt,
+    summary: summary, cosine: cosine, radial: radial, normalise: normalise, total: total,
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+<script>
+(function(){
+'use strict';
+const DATA = JSON.parse(document.getElementById('rf-data').textContent);
+const IMG = DATA.image, PATCH = DATA.patch, PG = DATA.patch_grid, GRID = DATA.grid;
+const ENC = DATA.ops_enc, DEC = DATA.ops_dec;
+const R = RF;
+const $ = id => document.getElementById(id);
+
+/* ---------------- stage metadata ---------------- */
+function stageMeta(dir){
+  const ops = dir === 'enc' ? ENC : DEC;
+  return ops.map((op, si) => {
+    const g = op.gout[0];
+    return {si:si, name:op.name, grid:op.gout, jump:IMG/g, attn:op.kind==='attn',
+            label:op.name.replace('_','·').replace('down','下采样').replace('up','上采样')
+                    .replace('conv','卷积').replace('mid','中段').replace('res','残差')};
+  });
+}
+const META = {enc: stageMeta('enc'), dec: stageMeta('dec')};
+
+/* ---------------- field cache ---------------- */
+const fcache = new Map();
+function cellKey(dir, si, r, c){ return dir+'|'+si+'|'+r+'|'+c; }
+function field(dir, si, r, c){
+  const k = cellKey(dir, si, r, c);
+  let f = fcache.get(k);
+  if (f) return f;
+  f = dir === 'enc' ? R.rfAtStage(ENC, si, r, c, GRID, PATCH) : R.influenceAt(DEC, si, r, c, IMG);
+  fcache.set(k, f);
+  return f;
+}
+const scache = new Map();
+function summ(dir, si, r, c){
+  const k = cellKey(dir, si, r, c);
+  let s = scache.get(k);
+  if (!s){ s = R.summary(field(dir, si, r, c)); scache.set(k, s); }
+  return s;
+}
+function finalFields(dir){
+  const k = 'final|' + dir;
+  let arr = fcache.get(k);
+  if (!arr){
+    const last = META[dir].length - 1;
+    arr = [];
+    for (let r = 0; r < GRID; r++) for (let c = 0; c < GRID; c++) arr.push(field(dir, last, r, c));
+    fcache.set(k, arr);
+  }
+  return arr;
+}
+
+/* ---------------- state ---------------- */
+const state = {dir:'enc', si:8, ar:4, ac:4, ovl:false, dif:false, scale:'gamma', thr:0.002, play:false};
+
+/* ---------------- colour ---------------- */
+function theme(){
+  const cs = getComputedStyle(document.documentElement);
+  return {ink:cs.getPropertyValue('--ink').trim(), ink3:cs.getPropertyValue('--ink3').trim(),
+          rule:cs.getPropertyValue('--rule').trim(), surface:cs.getPropertyValue('--surface').trim(),
+          fg: state.dir==='enc' ? '#a4551a' : '#24596f',
+          fg2: state.dir==='enc' ? '#2f6f86' : '#a4551a'};
+}
+function dark(){
+  const a = document.documentElement.dataset.theme;
+  if (a) return a === 'dark';
+  return matchMedia('(prefers-color-scheme: dark)').matches;
+}
+function ramp(t, which){
+  t = Math.max(0, Math.min(1, t));
+  const stops = dark()
+    ? (which === 'a' ? [[0.0,26,29,27],[0.45,120,74,32],[0.75,200,140,80],[1.0,246,214,170]]
+                     : [[0.0,26,29,27],[0.45,40,86,102],[0.75,110,170,196],[1.0,206,236,246]])
+    : (which === 'a' ? [[0.0,255,255,255],[0.35,244,226,206],[0.7,222,168,118],[1.0,150,70,20]]
+                     : [[0.0,255,255,255],[0.35,218,234,241],[0.7,150,196,215],[1.0,28,86,110]]);
+  for (let i=1;i<stops.length;i++){
+    if (t <= stops[i][0]){
+      const a = stops[i-1], b = stops[i];
+      const u = (t - a[0]) / (b[0] - a[0] || 1);
+      return [Math.round(a[1]+(b[1]-a[1])*u), Math.round(a[2]+(b[2]-a[2])*u), Math.round(a[3]+(b[3]-a[3])*u)];
+    }
+  }
+  const z = stops[stops.length-1];
+  return [z[1], z[2], z[3]];
+}
+function mixc(a, b, u){
+  return [Math.round(a[0]+(b[0]-a[0])*u), Math.round(a[1]+(b[1]-a[1])*u), Math.round(a[2]+(b[2]-a[2])*u)];
+}
+function rampDiv(t){
+  const d = dark();
+  const mid = d ? [26,29,27] : [255,255,255];
+  const neg = d ? [58,124,150] : [120,178,203];
+  const pos = d ? [226,160,106] : [176,94,36];
+  return t < 0 ? mixc(mid, neg, -t) : mixc(mid, pos, t);
+}
+function scaleVal(v, vmax){
+  const t = vmax > 0 ? v / vmax : 0;
+  if (state.scale === 'linear') return t;
+  if (state.scale === 'log') return Math.log1p(t * 999) / Math.log(1000);
+  return Math.pow(t, 0.45);
+}
+
+/* ---------------- main canvas ---------------- */
+const view = $('view'), ctx = view.getContext('2d');
+function drawMain(){
+  const S = view.width, f = field(state.dir, state.si, state.ar, state.ac);
+  const nb = state.ovl || state.dif ? field(state.dir, state.si, state.ar, Math.min(state.ac+1, GRID-1)) : null;
+  let fmax = 0;
+  for (let i=0;i<f.a.length;i++) if (f.a[i] > fmax) fmax = f.a[i];
+  let dmax = 0, diff = null;
+  if (state.dif && nb){
+    diff = R.F(f.h, f.w);
+    for (let i=0;i<f.a.length;i++){ diff.a[i] = Math.abs(f.a[i]-nb.a[i]); if (diff.a[i]>dmax) dmax=diff.a[i]; }
+  }
+  // heat map
+  const off = document.createElement('canvas'); off.width = IMG; off.height = IMG;
+  const octx = off.getContext('2d'); const imgd = octx.createImageData(IMG, IMG);
+  const mode = diff ? 'div' : 'seq';
+  const src = diff || f, smax = diff ? dmax : fmax;
+  for (let i=0;i<f.h;i++) for (let j=0;j<f.w;j++){
+    const p2 = i*f.w+j, v = src.a[p2];
+    let col;
+    if (mode === 'div'){
+      const s = (f.a[p2] - nb.a[p2]) / (dmax || 1);
+      col = rampDiv((s < 0 ? -1 : 1) * scaleVal(Math.abs(s), 1));
+    } else col = ramp(scaleVal(v, smax),'a');
+    const p = (i*IMG+j)*4;
+    imgd.data[p]=col[0]; imgd.data[p+1]=col[1]; imgd.data[p+2]=col[2]; imgd.data[p+3]=255;
+  }
+  octx.putImageData(imgd,0,0);
+  ctx.imageSmoothingEnabled = true; ctx.clearRect(0,0,S,S);
+  ctx.drawImage(off, 0, 0, IMG, IMG, 0, 0, S, S);
+  const px = S / IMG;
+  const T = theme();
+  // feature-map grid of the current stage
+  const jump = IMG / META[state.dir][state.si].grid[0];
+  if (jump >= 4){
+    ctx.strokeStyle = T.rule; ctx.lineWidth = 1; ctx.globalAlpha = .55; ctx.beginPath();
+    for (let k=0;k<=IMG;k+=jump){ ctx.moveTo(k*px,0); ctx.lineTo(k*px,S); ctx.moveTo(0,k*px); ctx.lineTo(S,k*px); }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  // support outline (only when the support is a real, smaller-than-frame region)
+  const s = R.summary(f);
+  if (s.areaFrac < 0.985){
+    const thr = state.thr * smax;
+    ctx.fillStyle = T.fg; ctx.globalAlpha = .85;
+    for (let i=0;i<f.h;i++) for (let j=0;j<f.w;j++){
+      const on = src.a[i*f.w+j] > thr;
+      const l = j>0 ? src.a[i*f.w+j-1] > thr : false;
+      const u = i>0 ? src.a[(i-1)*f.w+j] > thr : false;
+      if (on !== l || on !== u) ctx.fillRect(j*px, i*px, Math.ceil(px), Math.ceil(px));
+    }
+    ctx.globalAlpha = 1;
+  }
+  const cx = (s.cx + .5) * px, cy = (s.cy + .5) * px;
+  ctx.setLineDash([4,3]); ctx.lineWidth = 1.4;
+  [[s.r50, .75],[s.r90, .45]].forEach(function(pair){
+    ctx.globalAlpha = pair[1]; ctx.strokeStyle = T.fg;
+    ctx.beginPath(); ctx.arc(cx, cy, Math.max(pair[0]*px, 1), 0, Math.PI*2); ctx.stroke();
+  });
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+  // neighbour outline + the (thin) regions where the two receptive fields really differ
+  if (nb && !state.dif){
+    const s2 = R.summary(nb);
+    ctx.strokeStyle = T.fg2; ctx.setLineDash([2,3]); ctx.globalAlpha = .9; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.arc((s2.cx+.5)*px, (s2.cy+.5)*px, Math.max(s2.r90*px,1), 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    const dt = 0.05 * smax;
+    for (let i=0;i<f.h;i++) for (let j=0;j<f.w;j++){
+      const d = f.a[i*f.w+j] - nb.a[i*nb.w+j];
+      if (Math.abs(d) <= dt) continue;
+      const on = d > 0;
+      const l = j>0 ? (f.a[i*f.w+j-1] - nb.a[i*nb.w+j-1]) > dt : false;
+      const u = i>0 ? (f.a[(i-1)*f.w+j] - nb.a[(i-1)*nb.w+j]) > dt : false;
+      if (on !== l || on !== u){
+        ctx.fillStyle = on ? T.fg : T.fg2; ctx.globalAlpha = .9;
+        ctx.fillRect(j*px, i*px, Math.ceil(px), Math.ceil(px));
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  // anchor footprint
+  ctx.strokeStyle = T.ink; ctx.lineWidth = 1.6;
+  if (state.dir === 'enc'){
+    const j0 = state.ac * jump, i0 = state.ar * jump;
+    ctx.strokeRect(j0*px, i0*px, jump*px, jump*px);
+  } else {
+    const bx = (state.ac + .5) * IMG / GRID * px, by = (state.ar + .5) * IMG / GRID * px;
+    ctx.beginPath(); ctx.moveTo(bx-5,by-5); ctx.lineTo(bx+5,by+5); ctx.moveTo(bx+5,by-5); ctx.lineTo(bx-5,by+5);
+    ctx.stroke();
+  }
+  const sc = '（' + (state.scale==='linear'?'线性':state.scale==='log'?'对数':'γ=0.45') + '）';
+  let note;
+  if (state.dif) note = '锚点 − 右邻的差值' + sc + '：暖色 = 锚点更强，冷色 = 右邻更强，白 = 两者相同；仅作相对比较';
+  else if (state.ovl) note = '锚点热图 + 两者差异超过峰值 5% 的薄区（暖色 = 锚点独有，冷色 = 右邻独有）+ 右邻 r90 虚线圆';
+  else note = '归一化强度' + sc + (s.areaFrac >= 0.985
+        ? '；虚线圆 = r50 / r90，支撑集已覆盖整幅画面（见读数）'
+        : '；轮廓 = 支撑阈值 ' + (state.thr*100).toFixed(1) + '%');
+  $('legendnote').textContent = note;
+}
+function drawCbar(){
+  const c = $('cbar'), g = c.getContext('2d');
+  for (let x=0;x<c.width;x++){
+    const u = x/(c.width-1);
+    const col = state.dif ? rampDiv(u*2-1) : ramp(scaleVal(u, 1), 'a');
+    g.fillStyle = 'rgb('+col.join(',')+')'; g.fillRect(x,0,1,c.height);
+  }
+  const lab = c.parentNode;
+  lab.lastChild.textContent = state.dif ? '邻 > 锚' : '峰值';
+  lab.firstChild.textContent = state.dif ? '锚 > 邻' : '0';
+}
+
+/* ---------------- readouts ---------------- */
+function fmt(x, d){ return (x===undefined||x===null||!isFinite(x)) ? '–' : x.toFixed(d===undefined?2:d); }
+function simMatrix(dir){
+  const key = 'sim|' + dir;
+  let m = scache.get(key);
+  if (m) return m;
+  const fs = finalFields(dir), anchor = fs[state.ar*GRID + state.ac];
+  m = [];
+  for (let i=0;i<fs.length;i++) m.push(R.cosine(anchor, fs[i]));
+  scache.set(key, m);
+  return m;
+}
+function updateReadouts(){
+  const f = field(state.dir, state.si, state.ar, state.ac), s = R.summary(f);
+  const meta = META[state.dir][state.si];
+  const sim = simMatrix(state.dir);
+  const here = sim[state.ar*GRID + state.ac];
+  const right = sim[state.ar*GRID + Math.min(state.ac+1, GRID-1)];
+  const down = sim[Math.min(state.ar+1, GRID-1)*GRID + state.ac];
+  const centre = R.at(f, Math.round(s.cy), Math.round(s.cx));
+  const edgeR = Math.min(IMG-1, Math.round(s.cx + s.r90));
+  const edge = R.at(f, Math.round(s.cy), edgeR);
+  const kv = [
+    ['方向 / 阶段', (state.dir==='enc'?'编码':'解码') + ' · ' + meta.name + (meta.attn ? '（注意力）' : '')],
+    ['当前特征图', meta.grid[0] + '×' + meta.grid[1] + ' <em>1 格 = ' + fmt(meta.jump,0) + ' px</em>'],
+    ['有效半径 σ', fmt(s.sigma,2) + ' px'],
+    ['r50 / r90', fmt(s.r50,1) + ' / ' + fmt(s.r90,1) + ' px'],
+    ['支撑范围', s.extent[0] + '×' + s.extent[1] + ' px <em>' + fmt(100*s.areaFrac,1) + '% 画面</em>'],
+    ['有效视野直径', fmt(2*s.r90,0) + ' px <em>含 90% 强度</em>'],
+    ['中心 / r90 处强度', fmt(centre/(edge||1e-12),1) + '× <em>峰均比 ' + fmt(s.peak/(s.total/f.a.length),1) + '×</em>'],
+    ['与右邻单元 cos', fmt(right,4) + ' <em>差异 ' + fmt(100*Math.sqrt(Math.max(0,2-2*right)),1) + '%</em>'],
+    ['与下邻单元 cos', fmt(down,4)],
+    ['自身', fmt(here,4) + ' <em>（锚点）</em>'],
+    ['与右邻差值能量', fmt(100*Math.sqrt(Math.max(0,2-2*right)),1) + '% <em>‖a−b‖/‖a‖</em>'],
+  ];
+  $('kv').innerHTML = kv.map(r => '<dt>'+r[0]+'</dt><dd>'+r[1]+'</dd>').join('');
+  $('kvcap').textContent = '所有半径以图像像素为单位（128 px 画面）。cos = 两个感受野向量的余弦相似度（把 128×128 场拉直后计算），权重无关几何口径。';
+}
+
+/* ---------------- anchor grid ---------------- */
+function buildAnchorGrid(el, onClick, cls){
+  el.innerHTML = '';
+  for (let r=0;r<GRID;r++) for (let c=0;c<GRID;c++){
+    const b = document.createElement('button');
+    b.dataset.r = r; b.dataset.c = c;
+    b.setAttribute('aria-current', (r===state.ar && c===state.ac) ? 'true' : 'false');
+    b.title = 'latent 单元 (' + r + ',' + c + ')';
+    if (onClick) b.addEventListener('click', function(){ onClick(r,c); });
+    el.appendChild(b);
+  }
+}
+function paintSimGrid(){
+  const sim = simMatrix(state.dir), g = $('simGrid');
+  const kids = g.children;
+  for (let i=0;i<kids.length;i++){
+    const v = sim[i];
+    const t = Math.max(0, Math.min(1, (v - 0.90) / 0.10));
+    const col = ramp(t, 'a');
+    kids[i].style.background = 'rgb('+col.join(',')+')';
+    kids[i].title = 'cos = ' + v.toFixed(4);
+    kids[i].setAttribute('aria-current', (i===state.ar*GRID+state.ac) ? 'true' : 'false');
+  }
+}
+
+/* ---------------- charts ---------------- */
+function axes(svg, w, h, pad, xlab, ylab, ymin, ymax, xticks, yticks){
+  const s = [];
+  s.push('<line class="ax" x1="'+pad.l+'" y1="'+(h-pad.b)+'" x2="'+(w-pad.r)+'" y2="'+(h-pad.b)+'"/>');
+  s.push('<line class="ax" x1="'+pad.l+'" y1="'+pad.t+'" x2="'+pad.l+'" y2="'+(h-pad.b)+'"/>');
+  yticks.forEach(function(v){
+    const y = h-pad.b - (v-ymin)/(ymax-ymin)*(h-pad.t-pad.b);
+    s.push('<line class="grid" x1="'+pad.l+'" y1="'+y+'" x2="'+(w-pad.r)+'" y2="'+y+'"/>');
+    s.push('<text x="'+(pad.l-5)+'" y="'+(y+3)+'" text-anchor="end">'+v+'</text>');
+  });
+  xticks.forEach(function(t){
+    const x = pad.l + t.f*(w-pad.l-pad.r);
+    s.push('<text x="'+x+'" y="'+(h-pad.b+13)+'" text-anchor="middle">'+t.t+'</text>');
+  });
+  s.push('<text class="lbl" x="'+((w+pad.l-pad.r)/2)+'" y="'+(h-3)+'" text-anchor="middle">'+xlab+'</text>');
+  const ylx = pad.l > 40 ? 6 : 9;
+  s.push('<text class="lbl" transform="rotate(-90 '+ylx+' '+((h+pad.t-pad.b)/2)+')" x="'+ylx+'" y="'+((h+pad.t-pad.b)/2)+'" text-anchor="middle">'+ylab+'</text>');
+  svg.innerHTML = s.join('');
+}
+function polyline(pts, color, dash, width){
+  return '<polyline fill="none" stroke="'+color+'" stroke-width="'+(width||1.7)+'"'+
+    (dash ? ' stroke-dasharray="'+dash+'"' : '')+' points="'+pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')+'"/>';
+}
+function dot(p, color){ return '<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="2.6" fill="'+color+'"/>'; }
+
+function drawGrowth(){
+  const svg = $('growth'), w=420, h=210, pad={l:38,r:12,t:14,b:34};
+  const meta = META[state.dir];
+  const rows = meta.map(m => summ(state.dir, m.si, state.ar, state.ac));
+  const autog = (state.dir==='enc' && DATA.validation.enc_rows) ? DATA.validation.enc_rows : null;
+  const ymax = Math.max(10, Math.ceil(Math.max.apply(null, rows.map(r=>r.r90)) / 10) * 10);
+  const X = i => pad.l + (meta.length<2?0:i/(meta.length-1))*(w-pad.l-pad.r);
+  const Y = v => h-pad.b - (v/ymax)*(h-pad.t-pad.b);
+  axes(svg, w, h, pad, '阶段（特征图尺寸 →）', '半径 (px)', 0, ymax,
+       meta.map((m,i)=>({f: meta.length<2?0:i/(meta.length-1), t: m.grid[0]+'²'})),
+       [0, ymax/2, ymax].map(v=>Math.round(v)));
+  const T = theme();
+  let out = svg.innerHTML;
+  out += polyline(rows.map((r,i)=>[X(i),Y(r.sigma)]), T.fg, null, 2);
+  out += polyline(rows.map((r,i)=>[X(i),Y(r.r50)]), T.fg, '5 3');
+  out += polyline(rows.map((r,i)=>[X(i),Y(r.r90)]), T.fg, '1 3');
+  if (autog){
+    out += polyline(autog.map((r,i)=>[X(i),Y(r.autograd.sigma)]), T.fg2, '4 2', 1.2);
+    autog.forEach((r,i)=>{ out += dot([X(i),Y(r.autograd.sigma)], T.fg2); });
+  }
+  // attention marker
+  const ai = meta.findIndex(m=>m.attn);
+  if (ai>=0){
+    out += '<line class="grid" x1="'+X(ai)+'" y1="'+pad.t+'" x2="'+X(ai)+'" y2="'+(h-pad.b)+'"/>';
+    out += '<text class="lbl" x="'+(X(ai)+4)+'" y="'+(pad.t+30)+'">↑ 注意力：加入全局混合</text>';
+  }
+  svg.innerHTML = out;
+  $('growthcap').innerHTML = '实线 σ（标准差）· 虚线 r50 · 点线 r90' + (autog ? ' · 细线加圆点 = autograd 实测 σ（随机权重）' : '') +
+    '。纵轴单位：图像像素（128 px 画面）；横轴为阶段，标注为该阶段特征图尺寸。';
+}
+
+function drawRadial(){
+  const svg = $('radial'), w=420, h=210, pad={l:38,r:12,t:14,b:34};
+  const last = META[state.dir].length-1;
+  const f = field(state.dir, state.si, state.ar, state.ac);
+  const ff = field(state.dir, last, state.ar, state.ac);
+  const s = R.summary(f), sf = R.summary(ff);
+  const nb = 20, rmax = IMG/2;
+  const p1 = R.radial(f, s.cy, s.cx, nb, rmax), p2 = R.radial(ff, sf.cy, sf.cx, nb, rmax);
+  const m1 = Math.max.apply(null, Array.from(p1)), m2 = Math.max.apply(null, Array.from(p2));
+  const X = r => pad.l + (r/rmax)*(w-pad.l-pad.r), Y = v => h-pad.b - v*(h-pad.t-pad.b);
+  axes(svg, w, h, pad, '距感受野中心的半径 (px)', '归一化平均强度', 0, 1,
+       [0,20,40,60].map(v=>({f:v/rmax,t:v})), [0,.5,1]);
+  const T = theme();
+  let out = svg.innerHTML;
+  out += polyline(Array.from(p1).map((v,i)=>[X((i+.5)/nb*rmax), Y(v/m1)]), T.fg, null, 2);
+  out += polyline(Array.from(p2).map((v,i)=>[X((i+.5)/nb*rmax), Y(v/m2)]), T.fg, '5 3', 1.5);
+  const rad = DATA.validation.radial;
+  let note = '实线 = 当前阶段 · 虚线 = 最终阶段（latent）';
+  if (state.dir==='enc' && rad && state.ar===4 && state.ac===4){
+    const m0 = Math.max.apply(null, rad.autograd);
+    const rr = rad.rmax || rmax;
+    out += polyline(rad.autograd.map((v,i)=>[X((i+.5)/rad.autograd.length*rr), Y(v/m0)]), T.fg2, '2 2', 1.2);
+    note += ' · 细虚线 = autograd 实测（随机权重）';
+  }
+  out += '<text class="lbl" x="'+(pad.l+8)+'" y="'+(h-pad.b-6)+'">'+note+'</text>';
+  svg.innerHTML = out;
+  $('radialcap').textContent = '每条曲线各自归一化到自身峰值；中心处为 1，向外单调衰减。'+
+    '当前阶段中心/边缘比 ' + fmt(R.at(f, Math.round(s.cy), Math.round(s.cx)) / Math.max(1e-12, R.at(f, Math.round(s.cy), Math.min(IMG-1, Math.round(s.cx+s.r90)))), 1) +
+    '×，最终阶段 ' + fmt(R.at(ff, Math.round(sf.cy), Math.round(sf.cx)) / Math.max(1e-12, R.at(ff, Math.round(sf.cy), Math.min(IMG-1, Math.round(sf.cx+sf.r90)))), 1) + '×。';
+}
+
+function drawSim(){
+  const svg = $('ring'), w=240, h=190, pad={l:48,r:12,t:12,b:32};
+  const sim = simMatrix(state.dir);
+  const rings = {};
+  for (let r=0;r<GRID;r++) for (let c=0;c<GRID;c++){
+    const d = Math.max(Math.abs(r-state.ar), Math.abs(c-state.ac));
+    (rings[d] = rings[d] || []).push(sim[r*GRID+c]);
+  }
+  const keys = Object.keys(rings).map(Number).sort((a,b)=>a-b);
+  const means = keys.map(k => rings[k].reduce((a,b)=>a+b,0)/rings[k].length);
+  const ymin = Math.min.apply(null, means) - 0.005, ymax = 1.0;
+  const X = i => pad.l + (keys.length<2?0:i/(keys.length-1))*(w-pad.l-pad.r);
+  const Y = v => h-pad.b - (v-ymin)/(ymax-ymin)*(h-pad.t-pad.b);
+  axes(svg, w, h, pad, '切比雪夫环距离（单元）', '余弦相似度', Math.round(ymin*1000)/1000, 1,
+       keys.map((k,i)=>({f: keys.length<2?0:i/(keys.length-1), t:k})),
+       [ymin, (ymin+1)/2, 1].map(v=>v.toFixed(3)));
+  const T = theme();
+  let out = svg.innerHTML;
+  out += polyline(means.map((v,i)=>[X(i),Y(v)]), T.fg, null, 2);
+  means.forEach((v,i)=>{ out += dot([X(i),Y(v)], T.fg); });
+  out += '<text class="lbl" x="'+(pad.l+6)+'" y="'+(pad.t+10)+'">环均值（锚点 ' + state.ar + ',' + state.ac + '）</text>';
+  svg.innerHTML = out;
+  const adj = means[1];
+  $('simcap').textContent = '相邻环（距离 1）平均 cos = ' + fmt(adj,4) + '，即两个相邻 latent 的感受野差异能量仅 ' +
+    fmt(100*Math.sqrt(Math.max(0,2-2*adj)),1) + '%；距离 ' + keys[keys.length-1] + ' 时 cos = ' + fmt(means[means.length-1],4) + '。' +
+    '这正是 VAE latent 在空间上高度平滑、邻近单元大量冗余的原因。';
+}
+
+function drawTemporal(){
+  const svg = $('temporal'), w=420, h=180, pad={l:38,r:12,t:14,b:34};
+  const curve = DATA.temporal.curve;
+  const ymax = Math.max(8, Math.ceil(DATA.temporal.rf/20)*20);
+  const X = i => pad.l + i/(curve.length-1)*(w-pad.l-pad.r);
+  const Y = v => h-pad.b - (v/ymax)*(h-pad.t-pad.b);
+  axes(svg, w, h, pad, '编码器深度 →', '时间感受野 (输入帧)', 0, ymax,
+       [0, Math.floor(curve.length/2), curve.length-1].map(i=>({f:i/(curve.length-1), t:i})),
+       [0, ymax/2, ymax].map(v=>Math.round(v)));
+  const T = theme();
+  let out = svg.innerHTML;
+  out += polyline(curve.map((c,i)=>[X(i),Y(c[1])]), T.fg, null, 2);
+  out += '<text class="lbl" x="'+(pad.l+8)+'" y="'+(pad.t+12)+'">理论值（因果卷积，含两次时间下采样）</text>';
+  svg.innerHTML = out;
+  $('tempcap').textContent = '理论上一个 latent 帧可以看到 ' + fmt(DATA.temporal.rf,0) +
+    ' 个输入帧（时间步长 ' + fmt(DATA.temporal.stride,0) + '）；实际推理时被 cache 窗口与权重衰减限制，' +
+    '但“时间感受野远大于 4 帧”这一点成立。空间口径（本页其余部分）为单帧。';
+}
+
+/* ---------------- stage strip ---------------- */
+function buildStages(){
+  const el = $('stages'); el.innerHTML = '';
+  META[state.dir].forEach(function(m){
+    const b = document.createElement('button');
+    b.className = 'chip' + (m.attn ? ' attn' : '');
+    b.setAttribute('aria-current', m.si===state.si ? 'true' : 'false');
+    b.innerHTML = '<span>' + m.name + '</span><small>' + m.grid[0] + '×' + m.grid[1] + ' · ' + fmt(m.jump,0) + ' px</small>';
+    b.addEventListener('click', function(){ setStage(m.si); });
+    el.appendChild(b);
+  });
+}
+
+/* ---------------- interaction ---------------- */
+function setScale(s){ state.scale = s;
+  document.querySelectorAll('#scaleseg button').forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.scale===s))); }
+function setDir(d){
+  state.dir = d;
+  document.body.className = d + '-mode';
+  document.querySelectorAll('#dirseg button').forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.dir===d)));
+  $('stage').max = META[d].length-1;
+  state.si = META[d].length-1;
+  $('stage').value = state.si;
+  $('anchorTitle').textContent = d==='enc' ? '锚点：latent 单元 (4,4) → 输入像素视野' : '锚点：latent 单元 → 输出像素影响域';
+  buildStages(); refresh(true);
+}
+function setStage(si){
+  state.si = Math.max(0, Math.min(META[state.dir].length-1, si|0));
+  $('stage').value = state.si; refresh(false);
+}
+function setAnchor(r,c){
+  state.ar = r; state.ac = c;
+  document.querySelectorAll('#anchorGrid button').forEach(function(b){
+    b.setAttribute('aria-current', (Number(b.dataset.r)===r && Number(b.dataset.c)===c) ? 'true':'false'); });
+  scache.delete('sim|' + state.dir);
+  refresh(true);
+}
+function refresh(rebuildAnchors){
+  if (rebuildAnchors) buildAnchorGrid($('anchorGrid'), setAnchor);
+  drawMain(); updateReadouts(); paintSimGrid();
+  drawGrowth(); drawRadial(); drawSim(); drawTemporal();
+  document.querySelectorAll('#stages .chip').forEach(function(b,i){
+    b.setAttribute('aria-current', String(i===state.si)); });
+}
+function init(){
+  buildAnchorGrid($('anchorGrid'), setAnchor);
+  buildAnchorGrid($('simGrid'), setAnchor);
+  document.querySelectorAll('#dirseg button').forEach(b=>b.addEventListener('click', ()=>setDir(b.dataset.dir)));
+  document.querySelectorAll('#scaleseg button').forEach(b=>b.addEventListener('click', ()=>{ setScale(b.dataset.scale); drawMain(); drawCbar(); }));
+  $('stage').addEventListener('input', e=>setStage(e.target.value));
+  $('prev').addEventListener('click', ()=>setStage(state.si-1));
+  $('next').addEventListener('click', ()=>setStage(state.si+1));
+  $('ovl').addEventListener('change', e=>{ state.ovl = e.target.checked; drawMain(); drawCbar(); });
+  $('dif').addEventListener('change', e=>{ state.dif = e.target.checked; drawMain(); drawCbar(); });
+  $('thr').addEventListener('input', e=>{
+    state.thr = Number(e.target.value)/1000; $('thrlab').textContent = (Number(e.target.value)/10).toFixed(1)+'%'; drawMain(); });
+  $('play').addEventListener('click', function(){
+    state.play = !state.play; $('play').textContent = state.play ? '暂停' : '播放';
+    if (state.play) step();
+  });
+  function step(){
+    if (!state.play) return;
+    setStage(state.si >= META[state.dir].length-1 ? 0 : state.si+1);
+    setTimeout(step, 950);
+  }
+  $('theme').addEventListener('click', function(){
+    const next = dark() ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    $('theme').textContent = next === 'dark' ? '浅色' : '深色';
+    drawMain(); drawCbar(); drawGrowth(); drawRadial(); drawSim(); drawTemporal(); paintSimGrid();
+  });
+  view.addEventListener('mousemove', function(ev){
+    const rect = view.getBoundingClientRect();
+    const j = Math.min(IMG-1, Math.max(0, Math.floor((ev.clientX-rect.left)/rect.width*IMG)));
+    const i = Math.min(IMG-1, Math.max(0, Math.floor((ev.clientY-rect.top)/rect.height*IMG)));
+    const f = field(state.dir, state.si, state.ar, state.ac), s = R.summary(f);
+    const v = R.at(f,i,j)/s.peak;
+    const tip = $('tip');
+    tip.textContent = '(' + i + ',' + j + ') 强度 ' + (100*v).toFixed(v<0.01?2:1) + '% · 距中心 ' +
+      Math.hypot(i-s.cy, j-s.cx).toFixed(0) + ' px';
+    tip.style.left = (ev.clientX-rect.left) + 'px'; tip.style.top = (ev.clientY-rect.top) + 'px';
+    tip.style.opacity = 1;
+  });
+  view.addEventListener('mouseleave', ()=>{ $('tip').style.opacity = 0; });
+  document.addEventListener('keydown', function(e){
+    if (e.key==='ArrowRight') setStage(state.si+1);
+    if (e.key==='ArrowLeft') setStage(state.si-1);
+    if (e.key===' '){ e.preventDefault(); $('play').click(); }
+  });
+  // badges + method text
+  const v = DATA.validation;
+  $('badges').innerHTML = [
+    ['latent', '8×8×48'],
+    ['空间压缩', '16×16 (patch 2× · conv 8×)'],
+    ['时间压缩', '4×'],
+    ['卷积层', '编码 26 + 解码 34（因果 3D）'],
+    ['注意力', '各 1 块（8×8 分辨率，全图混合）'],
+    ['几何 vs autograd', 'cos ' + v.cosine_enc.toFixed(3) + ' / ' + v.cosine_dep.toFixed(3)],
+  ].map(b=>'<span class="badge">'+b[0]+' <b>'+b[1]+'</b></span>').join('');
+  const rows = [
+    ['编码：latent 单元 → 输入像素', 'autograd 梯度（随机权重）', 'cos ' + v.cosine_enc.toFixed(4),
+     'σ ' + fmt(v.enc_autograd.sigma,1) + ' vs ' + fmt(v.enc_dp.sigma,1) + ' px'],
+    ['解码：latent 单元 → 输出像素', '前向扰动 |Δ输出|', 'cos ' + v.cosine_dec.toFixed(4),
+     'σ ' + fmt(v.dec_perturb.sigma,1) + ' vs ' + fmt(v.dec_dp.sigma,1) + ' px'],
+    ['解码：输出像素 → latent', 'autograd 梯度（随机权重）', 'cos ' + v.cosine_dep.toFixed(4),
+     '64 / 64 个 latent 单元非零'],
+  ];
+  $('valtable').innerHTML = '<tr><th>几何量</th><th>独立实测</th><th>一致性</th><th>尺度</th></tr>' +
+    rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td class="num">'+r[2]+'</td><td class="num">'+r[3]+'</td></tr>').join('');
+  if (v.enc_rows && v.enc_rows.length){
+    $('valtable').innerHTML += '<tr><th>阶段</th><th>网格</th><th>DP σ (px)</th><th>autograd σ (px)</th></tr>' +
+      v.enc_rows.map(r=>'<tr><td>'+r.name+'</td><td class="num">'+r.grid[0]+'²</td><td class="num">'+
+        fmt(r.dp.sigma,2)+'</td><td class="num">'+fmt(r.autograd.sigma,2)+'</td></tr>').join('');
+  }
+  $('wsrc').textContent = DATA.weights || '随机初始化（seed 0）';
+  $('valtext').innerHTML = '几何口径（本页）与独立实测的一致性：编码方向 cos ' + v.cosine_enc.toFixed(4) +
+    '，解码影响域 cos ' + v.cosine_dec.toFixed(4) + '，解码依赖 cos ' + v.cosine_dep.toFixed(4) +
+    '。实测方法是在随机初始化的 Wan2.2 VAE 上做 autograd（编码/依赖）与前向扰动（解码影响域）。';
+  $('opinventory').textContent = '编码：conv_in 3×3 → 4 个残差下采样块（各 2 个残差块 + AvgDown3D 捷径；前两块时间/空间 2× 下采样，第三块空间 2×）→ 中段（残差 + 注意力 + 残差）→ conv_out；' +
+    '解码：conv_in → 中段（残差 + 注意力 + 残差）→ 4 个残差上采样块（各 3 个残差块 + DupUp3D 捷径）→ conv_out。共 62 个因果 3D 卷积 + 2 个注意力块，另有 10 个 2D 卷积（重采样 6 + 注意力 qkv/proj 4）。';
+  $('srccap').textContent = '来源：diffusers AutoencoderKLWan（Wan2.2-VAE：base_dim 160 / decoder_base_dim 256 / z_dim 48 / patch_size 2 / is_residual True / temperal_downsample [T,T,F]），本机 0.40.0.dev0。' +
+    '几何量（路径计数线性化）与权重无关；autograd 对照使用的权重：' + (DATA.weights || '随机初始化（seed 0）') + '。空间口径单帧 T=1，128×128 输入。';
+  drawCbar();
+  setDir('enc');
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+</body>
+</html>
