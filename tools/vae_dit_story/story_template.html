@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wan2.2 VAE + DiT:从像素到生成 · 可视化讲解</title>
+<style>
+  :root{
+    --red:#c0392b; --blue:#2471a3; --green:#1e8449; --orange:#e67e22; --gold:#b9770e;
+    --ink:#1f2933; --mut:#6b7785; --line:#e3e8ee; --bg:#fbfcfd; --card:#ffffff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+       line-height:1.75;font-size:16px}
+  header{background:linear-gradient(180deg,#fff, #f4f7fa);border-bottom:1px solid var(--line);padding:34px 20px 26px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+  h1{font-size:27px;margin:0 0 8px;letter-spacing:.2px}
+  .sub{color:var(--mut);font-size:15px}
+  .oneliner{margin-top:16px;padding:14px 16px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:8px;font-size:15.5px}
+  nav{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;gap:18px;flex-wrap:wrap;padding-top:10px;padding-bottom:10px;font-size:14px}
+  nav a{color:var(--mut);text-decoration:none;border-bottom:2px solid transparent;padding-bottom:2px}
+  nav a:hover{color:var(--ink);border-color:var(--green)}
+  section{padding:40px 0 8px;border-bottom:1px dashed var(--line)}
+  h2{font-size:22px;margin:0 0 6px}
+  h2 .tag{font-size:13px;color:#fff;background:var(--ink);border-radius:20px;padding:2px 10px;margin-right:10px;vertical-align:2px}
+  h3{font-size:17px;margin:26px 0 6px}
+  p{margin:10px 0}
+  .lead{color:var(--mut)}
+  figure{margin:20px 0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  figure img{width:100%;display:block;border-radius:6px}
+  figcaption{color:var(--mut);font-size:13.5px;padding:8px 6px 2px}
+  code{background:#f1f4f8;padding:1px 5px;border-radius:4px;font-size:13.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#0f172a;color:#e6edf3;padding:14px 16px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.6}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:14px 0;background:#fff}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f5f8fb;font-weight:600}
+  .ok{color:var(--green);font-weight:600}
+  .no{color:var(--red);font-weight:600}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin:16px 0}
+  .kpi div{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+  .kpi b{display:block;font-size:19px;line-height:1.3}
+  .kpi span{color:var(--mut);font-size:12.5px}
+  .demo{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;margin:20px 0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .demo h3{margin:0 0 4px;font-size:16.5px}
+  .demo .hint{color:var(--mut);font-size:13.5px;margin:0 0 10px}
+  .ctl{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:8px 0 6px;font-size:14px}
+  .ctl label{display:flex;gap:8px;align-items:center}
+  input[type=range]{width:190px;accent-color:var(--green)}
+  .out{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px}
+  .out div{background:#f7fafc;border:1px solid var(--line);border-radius:7px;padding:8px 10px;font-size:13.5px}
+  .out b{font-variant-numeric:tabular-nums}
+  canvas{width:100%;display:block;background:#fff;border-radius:6px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  .embed{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:16px 0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .embed-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
+  .embed-head a{margin-left:auto;color:var(--green);text-decoration:none;font-size:13.5px}
+  .embed .hint{color:var(--mut);font-size:13.5px;margin:0 0 10px}
+  .embed iframe{width:100%;height:1460px;border:1px solid var(--line);border-radius:8px;background:#fff;display:block}
+  @media(max-width:760px){.embed iframe{height:1800px}}
+  details{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:12px 0}
+  summary{cursor:pointer;font-weight:600}
+  footer{padding:30px 0 60px;color:var(--mut);font-size:13.5px}
+  .pill{display:inline-block;font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:20px;padding:1px 9px;color:var(--mut);margin-right:6px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>Wan2.2 VAE + DiT:从像素到生成</h1>
+    <div class="sub">VAE latent 与视野 · DiT 的先验/后验/引力场 · 条件作为一块"透镜"</div>
+    <div class="oneliner">
+      <b>一句话:</b>VAE 把像素压成 <code>8×8×48</code> 的 latent(平滑、冗余、通道尺度不均);DiT 在 latent 上学一个"多引力加权合成"的速度场,
+      把各向同性的 <code>N(0,I)</code> 搬运成高度各向异性的数据分布;而<b>条件只改先验</b> —— 等于给这些引力加一块按条件调音量的透镜。
+    </div>
+  </div>
+</header>
+
+<nav><div class="wrap">
+  <a href="#act1">第一幕 · VAE 与视野</a>
+  <a href="#act2">第二幕 · 先验/后验/引力场</a>
+  <a href="#act3">第三幕 · 条件 = 透镜</a>
+  <a href="#gloss">术语与边界</a>
+</div></nav>
+
+<!-- =============================================== ACT 1 -->
+<section id="act1"><div class="wrap">
+  <h2><span class="tag">第一幕</span>VAE:像素 ↔ 8×8×48 的 latent</h2>
+  <p class="lead">先看形状,再看"视野"和"冗余",最后看"通道尺度不均" —— 这三点决定了后面 DiT 面对的是什么样的分布。</p>
+
+  <h3>1.1 形状流水线</h3>
+  <div class="two">
+    <div>
+      <pre>128×128 图像
+  → patchify 2×2        → 64×64×12
+  → 编码器(3 次下采样)  → 8×8
+  → 96 通道 = 48 mean + 48 logvar
+  → z = μ + σ·ε         → latent 8×8×48
+  → 解码器(3 次上采样)  → 64×64×3
+  → unpatchify 2×2      → 128×128</pre>
+    </div>
+    <div>
+      <table>
+        <tr><th>组件</th><th>数量</th></tr>
+        <tr><td><code>WanCausalConv3d</code></td><td><b>62</b>(编码 26 + 解码 34)</td></tr>
+        <tr><td><code>WanAttentionBlock</code></td><td><b>2</b>(编/解码各 1 个 mid-block)</td></tr>
+        <tr><td>普通 <code>Conv2d</code></td><td>10</td></tr>
+      </table>
+      <p style="font-size:14px;color:var(--mut)">双相机时,两个相机的 latent 在<b>宽度方向拼接</b>:128×128×2 → latent <code>8×16</code>。</p>
+    </div>
+  </div>
+
+  <h3>1.2 "8×8×48" 该怎么读</h3>
+  <p><b>不是</b>"一个 48 维高斯",而是:<b>每个空间位置各有一个 48 维对角高斯</b>(每位置自己的 μ 和 σ);一帧有 <code>8×8 = 64</code> 个这样的高斯。48 个通道之间独立(对角),但<b>尺度差别很大</b>。</p>
+  <figure><img src="{{IMG_chan}}" alt="per-channel mu/sigma">
+    <figcaption>48 个通道的尺度并不相同:<code>latents_std</code> 从 <b>0.352</b> 到 <b>1.689</b>(相差 4.79 倍),31/48 个通道的 |mean| &gt; 0.1。
+      → <b>真实 latent 分布高度各向异性</b>,而加噪的 ε 是各向同性的。</figcaption></figure>
+
+  <h3>1.3 视野:一个 latent 单元能"看到"多少像素</h3>
+  <figure><img src="{{IMG_rf}}" alt="RF growth + similarity">
+    <figcaption>(1) 逐层视野:<b>σ 从 1.71 px 涨到 29.16 px(约 17 倍)</b>;下采样两次后覆盖率就达 100%(整个画面都在视野内)。
+      (2) 相邻 latent 单元的视野余弦相似度 <b>0.9959</b>,offset=4 时仍有 <b>0.9489</b> → <b>邻近 latent 数值高度相似</b>。</figcaption></figure>
+  <div class="kpi">
+    <div><b>1.71 → 29.16</b><span>RF σ(px),17 倍</span></div>
+    <div><b>8.6×</b><span>中心半径 vs r90(中心强、边缘弱)</span></div>
+    <div><b>0.9959</b><span>相邻 latent 的视野相似度</span></div>
+    <div><b>≈121 帧</b><span>时间视野(时间下采样 4×)</span></div>
+  </div>
+  <p>这三点的含义:<b>latent 空间是平滑的、有冗余的、越深越"全局"的</b>。所以 DiT 面对的不是 24,576 个独立变量,而是一个高度相关的场。</p>
+  <div class="embed">
+    <div class="embed-head">
+      <b>交互探针:逐层感受野 / 影响域浏览器</b>
+      <span class="pill">直接嵌入 tools/vae_rf_explorer/</span>
+      <a href="../vae_rf_explorer/vae_rf_explorer.html" target="_blank" rel="noopener">在新标签打开 ↗</a>
+    </div>
+    <p class="hint">拖 <b>stage</b> 滑杆看每层视野怎么长大;勾"<b>叠加相邻单元</b>"/"<b>差分</b>"看相邻 latent 的视野重合到什么程度;右上角可切<b>深色</b>。
+      这个探针是权重无关的逐路径计数引擎(和第一幕的曲线同一套算法)。</p>
+    {{IFRAME_RF_EXPLORER}}
+  </div>
+</div></section>
+
+<!-- =============================================== ACT 2 -->
+<section id="act2"><div class="wrap">
+  <h2><span class="tag">第二幕</span>DiT:先验、后验、引力场</h2>
+  <p class="lead">这一幕只回答一个问题:<b>为什么"每一步都取平均",最后却能生成合法的样本?</b></p>
+
+  <h3>2.1 训练一步到底在算什么</h3>
+  <pre>x0      = latent                          # 干净 latent
+eps     = torch.zeros_like(x0).normal_()  # ε ~ N(0, I)
+sigma   = 逐帧随机                          # 噪声水平
+x_sigma = (1-sigma)*x0 + sigma*eps        # 网络的输入
+target  = eps - x0 = (x_sigma - x0)/sigma # 网络要输出的东西
+loss    = || net(x_sigma, sigma[, c]) - target ||²</pre>
+  <table>
+    <tr><th>配置</th><th>一个 chunk 的 latent</th><th>latent token</th><th>网络输出行数</th><th>action token</th></tr>
+    <tr><td>LIBERO(128×128×2)</td><td><code>[1,48,4,8,16]</code> = 24,576 数</td><td>128</td><td>512</td><td>16</td></tr>
+    <tr><td>demo(256×256×2)</td><td><code>[1,48,4,16,32]</code> = 98,304 数</td><td>512</td><td>2048</td><td>32</td></tr>
+    <tr><td>franka(224×320×3)</td><td><code>[1,48,4,14,60]</code> = 161,280 数</td><td>840</td><td>3360</td><td>80</td></tr>
+    <tr><td>robotwin(tshape)</td><td><code>[1,48,2,24,20]</code> = 46,080 数</td><td>240</td><td>960</td><td>32</td></tr>
+  </table>
+  <p style="font-size:14px;color:var(--mut)">模型 30 层、inner_dim 3072、<b>5.09 B 参数</b>(meta 设备实跑确认)。输出是 token 序列 <code>[1,512,48]</code>,经 <code>data_seq_to_patch</code> 还原成 <code>[1,48,4,8,16]</code>(512×48 = 24,576 ✓)。</p>
+
+  <h3>2.2 三件套:先验 / 似然 / 后验</h3>
+  <table>
+    <tr><th>名字</th><th>是什么</th><th>谁提供</th><th>有显式公式吗</th></tr>
+    <tr><td><b>先验</b> <code>p_data(x₀)</code></td><td>数据集里什么样的 latent 常见</td><td>数据</td><td class="no">没有</td></tr>
+    <tr><td><b>似然</b> <code>p(x_σ|x₀,σ)</code></td><td><code>N(x_σ; (1−σ)x₀, σ²I)</code></td><td>加噪公式</td><td class="ok">有(实际只算 ‖·‖²)</td></tr>
+    <tr><td><b>后验</b> <code>p(x₀|x_σ,σ)</code></td><td><code>∝ 先验 × 似然</code></td><td>贝叶斯</td><td class="no">没有(只要它的均值)</td></tr>
+    <tr><td><b>边缘</b> <code>p(x_σ|σ)</code></td><td>似然按先验积分</td><td>推导</td><td class="no">没有(与 x₀ 无关 → 约掉)</td></tr>
+  </table>
+  <p>贝叶斯就是"数一数":<b>后验 ∝ 先验 × 似然</b>。下面的动画把"数一数"演出来。</p>
+
+  <div class="demo" id="demo1">
+    <h3>交互 ①:计数 → 后验(窗口越窄,计数比例越接近后验)</h3>
+    <p class="hint">两个候选 <code>x₀ = ±1</code>。拖动窗口宽度:看"落在窗口里的样本比例"如何逼近真正的后验。</p>
+    <div class="ctl">
+      <label>σ <input id="c1_s" type="range" min="0.20" max="1.00" step="0.01" value="0.50"><b id="c1_sv">0.50</b></label>
+      <label>窗口半宽 h <input id="c1_h" type="range" min="0.002" max="0.20" step="0.002" value="0.20"><b id="c1_hv">0.20</b></label>
+    </div>
+    <canvas id="c1" height="260"></canvas>
+    <div class="out">
+      <div>后验 P(+1 | x_σ=0.1): <b id="c1_post">–</b></div>
+      <div>窗口内计数比例: <b id="c1_cnt">–</b></div>
+      <div>两类被"筛中"的比例: <b id="c1_mass">–</b></div>
+      <div>两类似然: <b id="c1_lik">–</b></div>
+    </div>
+  </div>
+
+  <figure><img src="{{IMG_counting}}" alt="counting Bayes">
+    <figcaption>真实的计数版:400 万样本里,读数落在 [0.09,0.11] 的有 38,812 个,其中 23,213 个来自 +1 →
+      <b>0.5981</b>;而贝叶斯公式算出来是 <b>0.5987</b>。两者一致 —— 因为抽样本身就是免费的"后验加权"。</figcaption></figure>
+  <figure><img src="{{IMG_bayesinner}}" alt="Bayes in three steps">
+    <figcaption>贝叶斯三步:<b>先验 × 似然 → 归一化 → 后验</b>。</figcaption></figure>
+
+  <h3>2.3 为什么"平均"是对的:训练的真实机制</h3>
+  <p>数学上,平方损失的最优解是条件期望;而条件期望<b>按定义</b>就是后验加权平均。实现上更直接:</p>
+  <p style="background:#f7fafc;border-left:4px solid var(--green);padding:10px 14px;border-radius:6px">
+    <b>落在同一个读数附近的训练样本,其 <code>x₀</code> 的比例恰好等于后验</b>(贝叶斯的直接后果)。
+    所以对它们的 <code>target</code> 取<b>普通算术平均</b>,就等于<b>后验加权平均</b>。
+  </p>
+  <figure><img src="{{IMG_average}}" alt="why average">
+    <figcaption>10 个训练样本,5 个撞在同一个输入 <code>x_σ=0.1</code> 上:3 个要求 −1.8,2 个要求 +2.2。
+      网络只能给一个数 → 最优就是它们的平均 <b>−0.2</b>;而"算术平均"和"权重×值"是同一个数 —— <b>权重就是出现次数比例</b>。</figcaption></figure>
+  <p style="font-size:14.5px;color:var(--mut)">顺带说明:"同一小段读数"<b>不是代码里的步骤</b>,而是<b>网络平滑性</b>造成的分辨单元。邻域越窄越接近逐点条件期望(0.2 → −0.175;0.01 → −0.1947;→0 → −0.19475)。</p>
+
+  <div class="demo" id="demo2">
+    <h3>交互 ②:引力合成(每个样本一份"引力")</h3>
+    <p class="hint">每个样本是一个位于 <code>x₀</code> 的引力源,强度 = <b>先验 × 似然</b>;输出是各引力<b>位移矢量</b>的归一化加权和。拖动 σ 看合成方向如何从"朝中心"翻成"朝 +1"。</p>
+    <div class="ctl">
+      <label>σ <input id="c2_s" type="range" min="0.15" max="1.00" step="0.01" value="0.50"><b id="c2_sv">0.50</b></label>
+      <label><input id="c2_showpost" type="checkbox" checked> 显示后验权重</label>
+    </div>
+    <canvas id="c2" height="320"></canvas>
+    <div class="out">
+      <div>后验权重: <b id="c2_w">–</b></div>
+      <div>各引力贡献: <b id="c2_c">–</b></div>
+      <div>合成位移: <b id="c2_net">–</b></div>
+      <div>网络输出 v: <b id="c2_v">–</b></div>
+    </div>
+  </div>
+  <figure><img src="{{IMG_gravity}}" alt="gravity decomposition">
+    <figcaption>同一个量在四个 σ 下的分解。<b>σ=0.7 时权重大的那一侧(0.531)反而没赢</b> —— 因为方向取决于"<b>权重 × 位移长度</b>",不是只看权重。</figcaption></figure>
+  <figure><img src="{{IMG_gcontour}}" alt="gravity map as a contour plot">
+    <figcaption><b>引力场 = 等高线 + 箭头场</b>(2 维 latent;180 个样本分三团)
+      <b>每个样本是一个点源(质量)</b>,在每个 σ 下各自发出一个高斯 <code>N(x; (1−σ)x₀, σ²I)</code>;
+      把它们按先验叠加起来就是<b>密度场</b> —— <b>等值线(一圈圈等高线)就是它的等高线</b>,颜色越深密度越高(每个 panel 各自归一化)。
+      叠在等高线上的箭头是<b>速度场</b> <code>v(x) = (x − E[x₀|x])/σ</code>(每个采样点都会问一次"该往哪走");黑星是读数 <code>x_σ</code>;白点 + 黑色轨迹是一个<b>顺着场走的粒子</b>。
+      <br>看 σ 从 1 到 0.15 的变化:<b>σ=1</b> 时所有源的高斯都落在原点 → <b>一个同心圆包</b>,箭头一律指向内心;
+      <b>σ=0.35</b> 时鼓成<b>三个瓣</b>(一团一个),箭头分别指进最近的那个瓣;
+      <b>σ=0.15</b> 时三个瓣缩成贴着样本的<b>小团</b>,箭头只指向最近的几个样本。最大 |v| 从 <b>2.7 → 3.6 → 5.6 → 12.9</b> —— 越往后拉得越猛。</figcaption></figure>
+  <figure><img src="{{IMG_glens}}" alt="contours with and without the lens">
+    <figcaption><b>加条件(透镜)后的等高线对比</b> —— 同一批样本、同一个起点,<b>只改先验</b>(透镜让右团权重 0.8,另两团各 0.1)。
+      <b>注意三样东西同时变了:</b>
+      <b>① 密度场(等高线)</b>:右团的深色核心变大、同心圈向它鼓过去,左团的圈被压扁;
+      <b>② 速度场(箭头)</b>:整体摆向被加权的那个团;
+      <b>③ 轨迹</b>:从<b>同一个起点</b>(黑 X)出发,<b>无条件(红)落到左团</b> <code>(−1.46,−0.85)</code>,<b>加透镜(蓝)落到右团</b> <code>(+1.31,−0.77)</code> —— 相距 <b>2.77</b>。
+      <br>上一行 σ=0.35、下一行 σ=0.10:σ 越小,三个瓣越分得开、箭头越尖锐(max|v| 从 <b>5.6 涨到 19.4</b>),轨迹也越早被"锁定"到某一团。
+      这就是"条件从第一步就在改靶心、并把结果引导到另一团"的几何样子。</figcaption></figure>
+  <figure><img src="{{IMG_gfield}}" alt="from density field to velocity">
+    <figcaption><b>从密度场到速度</b>(600 个样本,两团 ±1.3;读数 <code>x_σ = 0.15</code>):
+      <b>(1)</b> 每个样本在<b>每个 σ</b> 下都是一个高斯密度场 <code>N(x; (1−σ)x₀, σ²)</code> —— 在 <code>(x, σ)</code> 平面上它就是一条<b>直线世界线</b>,宽度 = σ。
+      <b>σ=1 时所有钟形都挤在 x=0</b>(毫无信息);往下走它们<b>扇形展开</b>,越往下还"够得着"读数的样本越少(绿线 = 读数位置,绿色短棒 = 某个样本的 ±σ 宽度)。
+      <b>(2)</b> 在 σ=0.35 切一刀:每一条浅色钟形就是一个样本(整体放大 220 倍以便看清),在读数竖线处的**高度就是该样本的似然**;黑线是所有钟形叠出来的总密度。
+      <b>(3)</b> <code>权重 ∝ 似然 × 先验</code>:横轴似然、纵轴权重 —— 实心圈(先验相等)落在<b>同一条过原点直线</b>上;空心方块(加"透镜",右团先验 0.9)分裂成<b>两条斜率 9:1 的线</b>(14.34e-3 vs 1.59e-3)。<b>"先验"就是斜率。</b>
+      <b>(4)</b> 权重 × 方向再求和 = 加权均值 <code>E[x₀]=+0.730</code>,速度 <code>v=(x_σ−E[x₀])/σ=−1.657</code>。这一步就是网络要输出的那个数。</figcaption></figure>
+
+  <h3>2.4 从"全体平均场"到"精确搬运":σ 控制什么</h3>
+  <figure><img src="{{IMG_traj}}" alt="trajectories vs distribution">
+    <figcaption>同一件事的两种画法:<b>左=微观</b>(每颗粒子的轨迹),<b>右=宏观</b>(每个 σ 的分布)。<b>某一时刻的分布 = 该时刻所有粒子位置的直方图。</b>
+      注意:在 x&gt;0 一侧的比例从 σ=1 到 0.02 <b>全程不变</b> —— 分岔在起点抽定时就已确定。</figcaption></figure>
+  <figure><img src="{{IMG_5steps}}" alt="five steps">
+    <figcaption>五个 σ 处的两假设曲线:黄带 = "判不了的读数区间"。它的宽度 ≈ <code>σ²/间距</code>,随 σ 迅速变窄 → <b>歧义自己消失</b>。</figcaption></figure>
+  <div class="kpi">
+    <div><b>σ &gt; 0.618</b><span>中点吸引,云在收缩</span></div>
+    <div><b>σ ≈ 0.618</b><span>中点稳定性翻转</span></div>
+    <div><b>σ &lt; 0.618</b><span>中点排斥,云开始分裂</span></div>
+    <div><b>σ ≪ 0.1</b><span>精确搬运到数据点</span></div>
+  </div>
+
+  <div class="demo" id="demo3">
+    <h3>交互 ③:分布形状随 σ 变形(单峰 → 双峰)</h3>
+    <p class="hint">拖动 σ:看边缘分布 <code>p(x_σ|σ)</code> 如何从"一个钟形"变成"两个尖峰",以及粒子束如何分开。</p>
+    <div class="ctl"><label>σ <input id="c3_s" type="range" min="0.02" max="1.00" step="0.01" value="1.00"><b id="c3_sv">1.00</b></label></div>
+    <canvas id="c3" height="320"></canvas>
+    <div class="out">
+      <div>分布形态: <b id="c3_shape">–</b></div>
+      <div>在 x&gt;0 一侧的粒子: <b id="c3_frac">–</b></div>
+      <div>位置标准差: <b id="c3_std">–</b></div>
+      <div>σ=1 时 x_σ 与 x₀: <b>完全无关</b></div>
+    </div>
+  </div>
+  <figure><img src="{{IMG_bell}}" alt="bell to two spikes">
+    <figcaption>6000 颗粒子从 <code>N(0,1)</code> 出发,被精确场搬运成两个尖峰 —— 这正是数据分布。<b>起点是单峰,完全不妨碍终点是多峰。</b></figcaption></figure>
+  <figure><img src="{{IMG_arb}}" alt="arbitrary shapes">
+    <figcaption>同一个起点、同一套机制,只换目标分布:双尖峰 / 三尖峰 / "宽+窄"都能到达。</figcaption></figure>
+  <p>而"有效引力源的个数"随 σ <b>线性</b>下降(不是瞬间只剩一个);真正决定"清晰还是模糊"的是<b>这些源彼此的分歧</b>,不是源的个数:</p>
+  <figure><img src="{{IMG_eff}}" alt="effective sources">
+    <figcaption>(1) 有效源个数 ≈ <code>3.5·N·q·σ</code>;(2) 但这些源高度一致(加权标准差塌缩)→ <b>"源多" ≠ "模糊"</b>。</figcaption></figure>
+
+  <h3>2.5 起点轴与切口</h3>
+  <figure><img src="{{IMG_basins}}" alt="basins and cut">
+    <figcaption>(1)(2):起点轴(<code>N(0,1)</code>)被场切成两段,每段流向一个团。<b>切口位置 = Φ⁻¹(1−π)</b>:
+      π=0.5 → 切口 0.00;π=0.9 → 切口 −1.28(90% 落到 +1)。<b>起始分布永远不变,变的只有场。</b></figcaption></figure>
+  <div class="demo" id="demo4">
+    <h3>交互 ④:起点轴上的切口</h3>
+    <p class="hint">拖动"团 +1 的权重 π"(等价于"条件强度"或"数据集构成"):看切口如何平移,以及 60 个随机起点的去向。</p>
+    <div class="ctl"><label>π(+1) <input id="c4_p" type="range" min="0.50" max="0.99" step="0.01" value="0.50"><b id="c4_pv">0.50</b></label></div>
+    <canvas id="c4" height="300"></canvas>
+    <div class="out">
+      <div>切口位置 Φ⁻¹(1−π): <b id="c4_cut">–</b></div>
+      <div>实际落到 +1: <b id="c4_frac">–</b></div>
+      <div>理论权重 π: <b id="c4_pi">–</b></div>
+      <div>σ=1 时的靶心 E[x₀]: <b id="c4_mu">–</b></div>
+    </div>
+  </div>
+  <p>最后一块拼图:<b>数据分布可能是多峰的</b>(不同任务/场景/光照混在一个数据集里)。多峰直接导致"最优输出落在两团之间"—— 一个真实数据里不存在的地方。</p>
+  <figure><img src="{{IMG_multi}}" alt="multimodal">
+    <figcaption>1 维 / 2 维 / 1024 维里的"多峰":<b>峰 = 数据集里有一类典型样本</b>。高维画不出来,但可以<b>投影</b>到 1 维看:
+      数据的投影是两个尖峰,而"均值+协方差相同的高斯"投影是一个钟形。</figcaption></figure>
+</div></section>
+
+<!-- =============================================== ACT 3 -->
+<section id="act3"><div class="wrap">
+  <h2><span class="tag">第三幕</span>条件:给引力场加一块透镜</h2>
+  <p class="lead">这一幕只有一句话:<b>条件不增加源的个数,只改每个源的权重。</b></p>
+
+  <h3>3.1 数学上:只换先验</h3>
+  <pre>无条件:  p(x₀ | x_σ, σ)     ∝  p_data(x₀)  · N(x_σ; (1−σ)x₀, σ²I)
+有条件:  p(x₀ | x_σ, σ, c)  ∝  p(x₀ | c)   · N(x_σ; (1−σ)x₀, σ²I)
+                                 └── 只有这一项被换掉(先验)──┘</pre>
+  <table>
+    <tr><th>问题</th><th>答案</th></tr>
+    <tr><td>似然变了吗?</td><td class="ok">没变 —— 加噪是在 <code>x₀</code> 上做的,与 <code>c</code> 无关</td></tr>
+    <tr><td>源的个数变了吗?</td><td class="no">没变 —— 改的是每个源的<b>权重</b>;权重被压到 0 时效果上等同"删源"</td></tr>
+    <tr><td>训练要算先验吗?</td><td class="no">不要 —— 样本是 <code>(x₀, c)</code> <b>配对</b>抽出的,"先验"就是"带这个 c 的样本构成"</td></tr>
+  </table>
+  <figure><img src="{{IMG_cond}}" alt="conditioning tightens the prior">
+    <figcaption>条件的"收紧":模式数 2 → 1,被条件直接约束的方向被压扁(std 2.04 → 0.06),
+      而<b>团内部的自由度几乎不变</b>(1.55 → 0.39)。熵的下降 0.719 nats ≈ log 2 —— <b>省下来的几乎正好是"去哪个团"这一个比特</b>。</figcaption></figure>
+  <figure><img src="{{IMG_samexs}}" alt="same input different c">
+    <figcaption>同一个 <code>x_σ</code>、同一份噪声,只换 <code>c</code>:输出从 −0.20 变到 −1.40 / +1.80。
+      <b>两条高斯一条都没变,变的只有"乘在前面的权重"。</b></figcaption></figure>
+
+  <h3>3.2 代码级:条件从哪进模型</h3>
+  <p>训练时把四段拼成<b>一条序列</b>,用一张掩码规定谁能看谁:</p>
+  <pre>hidden_states = torch.cat([noisy_latent,            # ← 参与损失
+                           clean_latent,            # ← 条件
+                           noisy_action,            # ← 参与损失
+                           clean_action], dim=1)    # ← 条件
+latent_hs, _, action_hs, _, _ = torch.split(...)    # 条件段输出被丢弃</pre>
+  <table>
+    <tr><th>查询 → 键</th><th>允许?</th><th>规则</th></tr>
+    <tr><td>条件 → 条件</td><td class="ok">✅</td><td>仅因果</td></tr>
+    <tr><td><b>加噪 → 条件</b></td><td class="ok">✅</td><td>因果,<b>但排除自己所在的帧块</b> ← 条件就是从这里进入 target 的</td></tr>
+    <tr><td>加噪 → 加噪</td><td class="ok">✅</td><td>仅同一帧块内</td></tr>
+    <tr><td>条件 → 加噪</td><td class="no">❌</td><td>禁止</td></tr>
+  </table>
+  <figure><img src="{{IMG_mask}}" alt="attention mask">
+    <figcaption>真实的训练掩码(384×384;latent 128 + action 16 → 288 → 补齐 384)。<b>黑 = 允许注意</b>。
+      放大图里能看到三条规则的结构;第一条帧块没有任何历史可看。</figcaption></figure>
+  <p><b>加噪只加在 target 上</b>:条件帧默认干净,但有 <b>50% 概率被额外加噪</b>(<code>noisy_cond_prob=0.5</code>,噪声水平取高区间 <b>0.5~1.0</b>;action 分支为 0.0)——
+    训练模型容忍"脏观测",因为自回归 rollout 时条件帧正是模型自己上一步的输出。</p>
+  <p><b>推理</b>时改为:观测帧先跑一次把 <b>K/V 存进 <code>attn_caches</code></b>,之后每步只送 noisy latent;文本仍走 cross-attention。
+    <b>"无条件"= 换掉条件,不是另一个模型</b>:<code>noise_pred = uncond + guidance_scale * (cond - uncond)</code>。</p>
+
+  <h3>3.3 透镜的三条性质</h3>
+  <table>
+    <tr><th>#</th><th>性质</th><th>含义</th></tr>
+    <tr><td>①</td><td><b>乘性</b></td><td>权重 = 先验 × 似然,条件乘在先验上 → <b>不能凭空造源</b>(数据里没有的,条件也照不亮)</td></tr>
+    <tr><td>②</td><td><b>按样本/类别调</b></td><td>不是按位置连续调;更像"一排音量旋钮",每个 <code>c</code> 一张设定表</td></tr>
+    <tr><td>③</td><td><b>连 σ=1 的靶心一起改</b></td><td><code>E[x₀] → E[x₀|c]</code>,从第一步就偏置,不只是后期</td></tr>
+  </table>
+  <p style="background:#fff;border-left:4px solid var(--orange);padding:10px 14px;border-radius:6px">
+    <b>拔河</b>:若条件指向 −1(先验 0.9/0.1)而读数偏向 +1(似然 0.579/0.388),则后验 = <b>0.858 / 0.142</b> → <b>条件赢</b>。
+    条件足够强时能压过读数的倾向 —— 这就是"可控"的来源。
+  </p>
+</div></section>
+
+<!-- =============================================== GLOSSARY -->
+<section id="gloss"><div class="wrap">
+  <h2>术语、五个易错点与准确性边界</h2>
+
+  <h3>五个最容易误解的点</h3>
+  <table>
+    <tr><th>#</th><th>误解</th><th>正确</th></tr>
+    <tr><td>1</td><td>σ 是 ε 的方差</td><td>σ 是<b>混合比例 / 标准差</b>;<code>Var(σ·ε) = σ²</code>;σ 与 t 只差 1000 倍</td></tr>
+    <tr><td>2</td><td>后验是高斯</td><td><b>一般不是</b> —— 它继承 <code>p_data</code> 的形状,可能多峰</td></tr>
+    <tr><td>3</td><td>训练要算概率</td><td><b>一次都不算</b>;先验来自样本构成,后验加权来自"抽样 + 平均"</td></tr>
+    <tr><td>4</td><td>采样要还原某个 x₀</td><td>采样时<b>没有"原本的 x₀"</b>;只要求落点<b>分布</b>正确</td></tr>
+    <tr><td>5</td><td>条件改了加噪/模型</td><td>条件不改加噪、损失、采样循环;实现上只是"多一组 K/V",数学上只是"换先验"</td></tr>
+  </table>
+
+  <h3>符号对照</h3>
+  <table>
+    <tr><th>符号</th><th>名称</th><th>代码</th><th>形状(LIBERO)</th></tr>
+    <tr><td><code>x₀</code></td><td>干净 latent</td><td><code>latent</code></td><td><code>[1,48,4,8,16]</code></td></tr>
+    <tr><td><code>ε</code></td><td>噪声 ~ N(0,I)</td><td><code>eps</code> / <code>noise</code></td><td>同 x₀</td></tr>
+    <tr><td><code>σ</code></td><td>噪声水平(逐帧)</td><td><code>sigma</code> / <code>timesteps</code></td><td><code>[F]</code></td></tr>
+    <tr><td><code>x_σ</code></td><td>含噪 latent(网络输入)</td><td><code>x_sigma</code> / <code>noisy_latents</code></td><td>同 x₀</td></tr>
+    <tr><td><code>c</code></td><td>条件</td><td><code>text_emb</code> + KV cache</td><td>—</td></tr>
+  </table>
+
+  <details><summary>准确性边界(哪些是实测,哪些是近似)</summary>
+    <ul>
+      <li><b>实跑确认</b>:DiT 形状与参数量(meta 设备前向)、贝叶斯计数的每个数字、切口公式 <code>Φ⁻¹(1−π)</code>、轨迹不交叉/可逆、比例恒定 0.4830。</li>
+      <li><b>权重无关的线性化近似</b>:VAE 视野测量(逐路径计数;attention 视为"残差 + 均匀全局混合";空间只算单帧 <code>T=1</code>)。</li>
+      <li><b>随机初始化权重</b>:视野的 autograd / 扰动验证列用的是随机 VAE 权重(seed 0);<b>真实训练权重的 ERF 需拿真权重重跑</b>(<code>probe_rf.py --vae-path</code>)。</li>
+      <li><b>玩具模型</b>:1 维两点数据(±1)的所有数字都是精确解,但常数(0.618、1/σ²、1/σ³)是两点数据特有的;真实 24,576 维的常数不同,但两条<b>定性机制</b>(判别力随 σ 暴涨、中点稳定性翻转)普遍成立。</li>
+    </ul>
+  </details>
+
+  <details><summary>生成这幅讲解图表的脚本</summary>
+    <pre>本页所有静态图 = .claude/scratch/rf/*.png
+  新做的 5 张: story_figs.py
+  交互页:    本文件(vae_dit_story.html)</pre>
+  </details>
+</div></section>
+
+<footer><div class="wrap">
+  基于 <code>Robbyant/lingbot-va</code> 的代码与实测数据整理 · 页面自包含(图片已内嵌) · 可离线打开
+</div></footer>
+
+<script>
+/* re-scroll after the big inline images finish loading (they change layout height) */
+window.addEventListener("load", ()=>{
+  if(location.hash){ const el = document.querySelector(location.hash); if(el) el.scrollIntoView(); }
+});
+
+/* ---------- shared math ---------- */
+const D = [-1.0, 1.0];
+function gauss(x, m, s){ return Math.exp(-0.5*((x-m)/s)**2); }              // unnormalised
+function gpdf(x, m, s){ return Math.exp(-0.5*((x-m)/s)**2)/(s*Math.sqrt(2*Math.PI)); }
+function post(x, s, w){                                                     // w = [p(-1), p(+1)]
+  const l0 = w[0]*gauss(x, (1-s)*D[0], s), l1 = w[1]*gauss(x, (1-s)*D[1], s);
+  const z = l0 + l1 || 1e-300;
+  return [l0/z, l1/z];
+}
+function vfield(x, s, w){
+  const p = post(x, s, w);
+  const ex = p[0]*D[0] + p[1]*D[1];
+  return (x - ex)/s;
+}
+function trajectory(z, w, sig){                                             // sig: array of sigma, decreasing
+  let x = z, out = [x];
+  for(let i=0;i<sig.length-1;i++){
+    x = x + vfield(x, sig[i], w)*(sig[i+1]-sig[i]);
+    out.push(x);
+  }
+  return out;
+}
+function sigGrid(n, hi, lo){ const a=[]; for(let i=0;i<n;i++){ a.push(Math.exp(Math.log(hi)+(Math.log(lo)-Math.log(hi))*i/(n-1))); } return a; }
+/* normal CDF / quantile */
+function Phi(x){ // Abramowitz-Stegun
+  const t = 1/(1+0.2316419*Math.abs(x));
+  const d = 0.3989423*Math.exp(-x*x/2);
+  let p = d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));
+  return x>0 ? 1-p : p;
+}
+function PhiInv(q){ // Acklam
+  if(q<=0) return -8; if(q>=1) return 8;
+  const a=[-3.969683028665376e+01,2.209460984245205e+02,-2.759285104469687e+02,1.383577518672690e+02,-3.066479806614716e+01,2.506628277459239e+00];
+  const b=[-5.447609879822406e+01,1.615858368580409e+02,-1.556989798598866e+02,6.680131188771972e+01,-1.328068155288572e+01];
+  const c=[-7.784894002430293e-03,-3.223964580411365e-01,-2.400758277161838e+00,-2.549732539343734e+00,4.374664141464968e+00,2.938163982698783e+00];
+  const d=[7.784695709041462e-03,3.224671290700398e-01,2.445134137142996e+00,3.754408661907416e+00];
+  const pl=0.02425;
+  let x;
+  if(q<pl){ const u=Math.sqrt(-2*Math.log(q));
+    x=(((((c[0]*u+c[1])*u+c[2])*u+c[3])*u+c[4])*u+c[5])/((((d[0]*u+d[1])*u+d[2])*u+d[3])*u+1);
+  } else if(q<=1-pl){ const u=q-0.5, r=u*u;
+    x=(((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*u/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+  } else { const u=Math.sqrt(-2*Math.log(1-q));
+    x=-(((((c[0]*u+c[1])*u+c[2])*u+c[3])*u+c[4])*u+c[5])/((((d[0]*u+d[1])*u+d[2])*u+d[3])*u+1);
+  }
+  return x;
+}
+/* canvas helpers */
+function setup(id, hCss){
+  const cv = document.getElementById(id);
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 800;
+  cv.width = w*dpr; cv.height = hCss*dpr;
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {cv, ctx, W:w, H:hCss};
+}
+function axes(ctx, W, H, pad, xr, yr){
+  ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle="#e3e8ee"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, H-pad.b); ctx.lineTo(W-pad.r, H-pad.b); ctx.stroke();
+}
+const X = (v,xr,pad,W)=> pad.l + (v-xr[0])/(xr[1]-xr[0])*(W-pad.l-pad.r);
+const Y = (v,yr,pad,H)=> H-pad.b - (v-yr[0])/(yr[1]-yr[0])*(H-pad.t-pad.b);
+function line(ctx,pts,color,lw){ ctx.strokeStyle=color; ctx.lineWidth=lw; ctx.beginPath();
+  pts.forEach((p,i)=> i? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1])); ctx.stroke(); }
+function arrow(ctx,x1,y1,x2,y2,color,lw){
+  ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=lw;
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  const a=Math.atan2(y2-y1,x2-x1), s=5+lw*1.2;
+  ctx.beginPath(); ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-s*Math.cos(a-0.4), y2-s*Math.sin(a-0.4));
+  ctx.lineTo(x2-s*Math.cos(a+0.4), y2-s*Math.sin(a+0.4));
+  ctx.closePath(); ctx.fill();
+}
+function live(id, canvasId, h, drawFn){
+  const el = document.getElementById(id);
+  const go = ()=>{ const c = setup(canvasId, h); drawFn(c); };
+  el.addEventListener("input", ()=>{ go(); });
+  window.addEventListener("resize", go);
+  go();
+}
+
+/* ================= ① counting -> posterior ================= */
+live("c1_s", "c1", 260, ({ctx,W,H})=>{
+  const s = +document.getElementById("c1_s").value;
+  const h = +document.getElementById("c1_h").value;
+  document.getElementById("c1_sv").textContent = s.toFixed(2);
+  document.getElementById("c1_hv").textContent = h.toFixed(3);
+  const w = [0.5, 0.5], XS = 0.1;
+  const pad = {l:52,r:16,t:18,b:34}, xr = [-1.6,1.6], yr = [0,1.12];
+  axes(ctx,W,H,pad,xr,yr);
+  // two gaussians
+  const mk = (c)=> { const pts=[]; for(let i=0;i<=400;i++){ const x=xr[0]+(xr[1]-xr[0])*i/400;
+      pts.push([X(x,xr,pad,W), Y(gauss(x,(1-s)*c,s),yr,pad,H)]); } return pts; };
+  line(ctx, mk(-1), "#93b8d4", 2); line(ctx, mk(1), "#e0a9a1", 2);
+  // window band
+  const xa = X(XS-h,xr,pad,W), xb = X(XS+h,xr,pad,W);
+  ctx.fillStyle="rgba(230,126,34,.22)"; ctx.fillRect(xa,pad.t,xb-xa,H-pad.t-pad.b);
+  ctx.strokeStyle="#e67e22"; ctx.setLineDash([4,3]); ctx.beginPath();
+  ctx.moveTo(X(XS,xr,pad,W),pad.t); ctx.lineTo(X(XS,xr,pad,W),H-pad.b); ctx.stroke(); ctx.setLineDash([]);
+  // readout (exact, via CDF)
+  const m0=(1-s)*(-1), m1=(1-s)*1;
+  const mass = (m)=> Phi((XS+h-m)/s) - Phi((XS-h-m)/s);
+  const a0 = 0.5*mass(m0), a1 = 0.5*mass(m1), zz = a0+a1;
+  const postCNT = a1/zz;
+  const p = post(XS, s, w), postPT = p[1];
+  document.getElementById("c1_post").textContent = postPT.toFixed(4);
+  document.getElementById("c1_cnt").textContent  = postCNT.toFixed(4) + (h<0.02? "  ≈" : "");
+  document.getElementById("c1_mass").textContent = (a1*2).toFixed(4)+" / "+(a0*2).toFixed(4);
+  document.getElementById("c1_lik").textContent  = gauss(XS,m1,s).toFixed(4)+" / "+gauss(XS,m0,s).toFixed(4);
+  ctx.fillStyle="#1f2933"; ctx.font="12px ui-monospace,monospace";
+  ctx.fillText("likelihood  ×  窗口  →  计数比例 = 后验", pad.l+4, pad.t+12);
+  ctx.fillStyle="#c0392b"; ctx.fillText("x₀=+1", X(1,xr,pad,W)-16, pad.t+26);
+  ctx.fillStyle="#2471a3"; ctx.fillText("x₀=−1", X(-1,xr,pad,W)-16, pad.t+26);
+  ctx.fillStyle="#6b7785"; ctx.fillText("x_σ", X(XS,xr,pad,W)-10, H-pad.b+16);
+});
+
+/* ================= ② gravity ================= */
+live("c2_s", "c2", 320, ({ctx,W,H})=>{
+  const s = +document.getElementById("c2_s").value;
+  document.getElementById("c2_sv").textContent = s.toFixed(2);
+  const w=[0.5,0.5], XS=0.1;
+  const p = post(XS, s, w);
+  const pad={l:52,r:16,t:44,b:40}, xr=[-1.75,1.75], yr=[-0.6,4.2];
+  axes(ctx,W,H,pad,xr,yr);
+  const pulls=[-1-XS, 1-XS];
+  const contrib=[p[0]*pulls[0], p[1]*pulls[1]];
+  // source markers + reading
+  D.forEach((d,i)=>{ const x=X(d,xr,pad,W), y=Y(0.25,yr,pad,H);
+    ctx.fillStyle="#2c3e50"; ctx.beginPath(); ctx.arc(x,y,5,0,7); ctx.fill();
+    ctx.fillStyle="#6b7785"; ctx.font="12px sans-serif"; ctx.fillText("x₀="+(d>0?"+1":"−1"), x-20, H-pad.b+16); });
+  ctx.strokeStyle="#111"; ctx.setLineDash([5,4]); ctx.beginPath();
+  ctx.moveTo(X(XS,xr,pad,W),pad.t-10); ctx.lineTo(X(XS,xr,pad,W),H-pad.b); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle="#111"; ctx.font="12px ui-monospace,monospace";
+  ctx.fillText("x_σ="+XS, X(XS,xr,pad,W)-16, H-pad.b+30);
+  // pulls
+  D.forEach((d,i)=>{
+    const col = d<0? "#2471a3":"#c0392b";
+    const y = Y(1+i*1.0,yr,pad,H);
+    arrow(ctx, X(XS,xr,pad,W), y, X(XS+contrib[i],xr,pad,W), y, col, 1+6*p[i]);
+    ctx.fillStyle=col; ctx.font="11px ui-monospace,monospace";
+    ctx.fillText("w="+p[i].toFixed(3)+" × "+(pulls[i]>0?"+":"")+pulls[i].toFixed(2)
+                 +" = "+(contrib[i]>0?"+":"")+contrib[i].toFixed(3),
+                 X(XS+contrib[i],xr,pad,W)+(contrib[i]>0?8:-118), y+4);
+  });
+  // resultant
+  const net = contrib[0]+contrib[1];
+  const yR = Y(3.3,yr,pad,H);
+  arrow(ctx, X(XS,xr,pad,W), yR, X(XS+net,xr,pad,W), yR, "#1e8449", 3.2);
+  ctx.fillStyle="#1e8449"; ctx.font="12px ui-monospace,monospace";
+  ctx.fillText("resultant "+(net>0?"+":"")+net.toFixed(4), X(XS,xr,pad,W)-40, yR-12);
+  const ex = XS+net, v = (XS-ex)/s;
+  document.getElementById("c2_w").textContent = p[1].toFixed(4)+" / "+p[0].toFixed(4);
+  document.getElementById("c2_c").textContent = contrib[1].toFixed(4)+" / "+contrib[0].toFixed(4);
+  document.getElementById("c2_net").textContent = (net>0?"+":"")+net.toFixed(4);
+  document.getElementById("c2_v").textContent = (v>0?"+":"")+v.toFixed(4);
+});
+
+/* ================= ③ density morph + bundle ================= */
+const SIG3 = sigGrid(900, 1.0, 0.02);
+const ZS = (()=>{ let seed=12345; const r=()=>{ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; };
+  const out=[]; for(let i=0;i<70;i++){ let u=0,v=0; while(!u)u=r(); while(!v)v=r();
+    out.push(Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)); } return out; })();
+const TRAJ = (()=>{ const w=[0.5,0.5]; return ZS.map(z=>trajectory(z,w,SIG3)); })();
+live("c3_s", "c3", 320, ({ctx,W,H})=>{
+  const s = +document.getElementById("c3_s").value;
+  document.getElementById("c3_sv").textContent = s.toFixed(2);
+  const pad={l:52,r:16,t:20,b:36}, xr=[-2.6,2.6], yr=[-0.02,2.0];
+  axes(ctx,W,H,pad,xr,yr);
+  // trajectories (x vs sigma): horizontal axis = x, vertical = 1-sigma mapped
+  const k0 = Math.round((Math.log(1.0)-Math.log(s))/(Math.log(1.0)-Math.log(0.02))*899);
+  const toV = (sg)=> 1 - (Math.log(1.0)-Math.log(sg))/(Math.log(1.0)-Math.log(0.02));
+  TRAJ.forEach((tr,i)=>{
+    const pts=[]; for(let k=0;k<=Math.max(k0,1);k++){
+      const sg=SIG3[Math.min(k,899)];
+      pts.push([X(tr[k],xr,pad,W), pad.t + toV(sg)*(H-pad.t-pad.b)]);
+    }
+    line(ctx, pts, tr[k0]>0? "rgba(192,57,43,.42)":"rgba(36,113,163,.42)", 1);
+  });
+  // marginal density at this sigma
+  const pts=[]; for(let i=0;i<=500;i++){ const x=xr[0]+(xr[1]-xr[0])*i/500;
+    const d=0.5*gpdf(x,(1-s),s)+0.5*gpdf(x,-(1-s),s);
+    pts.push([X(x,xr,pad,W), Y(d,yr,pad,H)]); }
+  line(ctx, pts, "#111", 2);
+  // measure fraction right & std from the samples
+  let right=0, mean=0, n=0;
+  TRAJ.forEach(tr=>{ mean+=tr[k0]; n++; if(tr[k0]>0) right++; });
+  mean/=n; let varr=0; TRAJ.forEach(tr=>{ varr += (tr[k0]-mean)**2; }); varr/=n;
+  const twoPeak = (1-s) > 1.2*s;
+  document.getElementById("c3_shape").textContent = twoPeak? "两个峰(已分裂)":"单个峰(还在收缩/临界)";
+  document.getElementById("c3_frac").textContent = (100*right/n).toFixed(1)+"%";
+  document.getElementById("c3_std").textContent = Math.sqrt(varr).toFixed(3);
+  ctx.fillStyle="#1f2933"; ctx.font="12px ui-monospace,monospace";
+  ctx.fillText("黑线 = 该 σ 下的分布 p(x_σ|σ);彩色 = 粒子轨迹(红=终点 +1,蓝=−1)", pad.l+4, pad.t+12);
+  ctx.fillStyle="#6b7785"; ctx.font="11px sans-serif"; ctx.fillText("σ=1", pad.l-34, pad.t+10); ctx.fillText("σ→0", pad.l-40, H-pad.b);
+});
+
+/* ================= ④ basins / cut ================= */
+live("c4_p", "c4", 300, ({ctx,W,H})=>{
+  const pi = +document.getElementById("c4_p").value;
+  document.getElementById("c4_pv").textContent = pi.toFixed(2);
+  const w=[1-pi, pi];
+  const cut = PhiInv(1-pi);
+  const pad={l:52,r:16,t:34,b:40}, xr=[-3,3], yr=[-0.5,1.6];
+  axes(ctx,W,H,pad,xr,yr);
+  // basin shading
+  const xc = X(cut,xr,pad,W);
+  ctx.fillStyle="rgba(36,113,163,.10)"; ctx.fillRect(pad.l, pad.t, xc-pad.l, H-pad.t-pad.b);
+  ctx.fillStyle="rgba(192,57,43,.10)"; ctx.fillRect(xc, pad.t, W-pad.r-xc, H-pad.t-pad.b);
+  ctx.strokeStyle="#111"; ctx.setLineDash([5,4]); ctx.beginPath();
+  ctx.moveTo(xc,pad.t); ctx.lineTo(xc,H-pad.b); ctx.stroke(); ctx.setLineDash([]);
+  // sample starts + destinations
+  const sg = sigGrid(700, 1.0, 0.02);
+  let right=0;
+  for(let i=0;i<60;i++){
+    const z = ZS[i]*1.35;
+    const tr = trajectory(z, w, sg);
+    const dest = tr[tr.length-1];
+    if(dest>0) right++;
+    const y0 = Y(0.2,yr,pad,H), y1 = Y(1.0,yr,pad,H);
+    const x0 = X(z,xr,pad,W), x1 = X(dest,xr,pad,W);
+    ctx.strokeStyle = dest>0? "rgba(192,57,43,.5)":"rgba(36,113,163,.5)";
+    ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x0,y0); ctx.bezierCurveTo(x0,(y0+y1)/2, x1,(y0+y1)/2, x1,y1); ctx.stroke();
+    ctx.fillStyle = dest>0? "#c0392b":"#2471a3";
+    ctx.beginPath(); ctx.arc(x0,y0,2.4,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x1,y1,3.2,0,7); ctx.fill();
+  }
+  ctx.fillStyle="#2c3e50"; ctx.font="12px sans-serif";
+  ctx.fillText("x₀=−1", X(-1,xr,pad,W)-18, Y(1.0,yr,pad,H)-10);
+  ctx.fillText("x₀=+1", X(1,xr,pad,W)-18, Y(1.0,yr,pad,H)-10);
+  ctx.fillStyle="#111"; ctx.font="12px ui-monospace,monospace";
+  ctx.fillText("切口 z="+cut.toFixed(3), xc-36, pad.t-8);
+  ctx.fillStyle="#6b7785";
+  ctx.fillText("起点轴 z ~ N(0,1)  (每次采样都从同一条轴抽)", pad.l+4, H-pad.b+18);
+  ctx.fillStyle="#2471a3"; ctx.fillText("左段 → −1 ("+((1-pi)*100).toFixed(0)+"%)", pad.l+8, pad.t+14);
+  ctx.fillStyle="#c0392b"; ctx.fillText("右段 → +1 ("+(pi*100).toFixed(0)+"%)", W-pad.r-136, pad.t+14);
+  document.getElementById("c4_cut").textContent = cut.toFixed(3);
+  document.getElementById("c4_frac").textContent = (100*right/60).toFixed(0)+"%";
+  document.getElementById("c4_pi").textContent = (100*pi).toFixed(0)+"%";
+  document.getElementById("c4_mu").textContent = (pi*1 + (1-pi)*(-1)).toFixed(3);
+});
+</script>
+</body>
+</html>
