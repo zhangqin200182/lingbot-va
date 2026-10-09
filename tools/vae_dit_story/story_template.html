@@ -475,17 +475,17 @@ latent_hs, _, action_hs, _, _ = torch.split(...)    # 条件段输出被丢弃</
 
   <figure><img src="{{IMG_wammap}}" alt="six world-action models: coupling direction vs imagination timing">
     <figcaption><b>把六个工作放在「耦合方向 × 想象时机」两张轴上。</b>
-      横轴是<b>视频 ↔ 动作的信息流方向</b>(双向 / 视频先行 / 动作先行 / 无耦合);纵轴是<b>想象发生在什么时候</b>(不做 / 按需 / 同步挂热路径 / 异步后台)。
+      横轴是<b>视频 ↔ 动作的信息流方向</b>(双向 / 视频先行 / 动作先行 / 无耦合);纵轴是<b>想象与执行的关系</b>(不生成 / <b>联合生成</b> / 串行生成 / 异步生成)。
       <br><b>能问 what-if <code>p(v|a)</code> 的只有【双向】与【动作先行】两列</b>(DreamZero / Cosmos 3 / Motus2);<b>带 value 与评估闭环的只有 Motus2</b>;
-      延迟最低的是 GlanceWAM(48 ms)与 FastWAM(190 ms),而把想象挂在控制热路径上的同步方案要 1133–3812 ms。</figcaption></figure>
+      延迟最低的是 GlanceWAM(48 ms)与 FastWAM(190 ms),而把想象挂在控制热路径上的同步方案要 1133–3812 ms。<br><b>注意区分两种「按需」</b>:<b>Cosmos 3 与 DreamZero 同属「联合生成」</b>—— policy 模式是一次去噪同时出视频和动作,并没有「只出动作」的便宜路径;只有 <b>Motus2</b> 是<b>结构性</b>的按需:因果分解与掩码保证动作不依赖视频,普通控制只查 <code>π(A|c)</code>,视频与价值只在规划/MBRL 时才物化。</figcaption></figure>
 
   <h3>5.1 六方对照</h3>
   <table>
     <tr><th></th><th>lingbot-va(本项目)</th><th>FastWAM</th><th>DreamZero</th><th>Cosmos 3</th><th>Motus2</th><th>GlanceWAM</th></tr>
     <tr><td>骨干/流</td><td>1 骨干 + 模态专属头</td><td>MoT 双流(3072/1024)</td><td>1 栈(video/action/state)</td><td>2 塔(AR reasoner + DM generator)</td><td>1 主干(3 接口)+ 轻量触觉塔</td><td>1 主干 + 轻量动作头</td></tr>
     <tr><td><b>耦合方向</b></td><td><b>视频先行</b>(动作看预测视频)</td><td><b>无</b>(动作只看当前帧)</td><td><b>双向</b>(同 block)</td><td><b>双向</b>(生成塔内全注意力)</td><td><b>动作先行</b> A→Z→U</td><td><b>视频先行</b>(IDM,条件是远视帧)</td></tr>
-    <tr><td>想象内容</td><td>每 chunk 稠密视频</td><td>—</td><td>每 block 视频</td><td>整窗口 video+audio+action</td><td>按需 rollout</td><td><b>单帧、~3 s 远未来</b></td></tr>
-    <tr><td>想象时机</td><td>同步(必须)</td><td>不做</td><td>同步</td><td>按需</td><td>按需</td><td><b>异步后台(慢钟)</b></td></tr>
+    <tr><td>想象内容</td><td>每 chunk 稠密视频</td><td>—</td><td>每 block 视频</td><td>整窗口 video+audio+action</td><td>规划时 rollout(默认不出)</td><td><b>单帧、~3 s 远未来</b></td></tr>
+    <tr><td><b>想象与执行</b></td><td><b>串行生成</b>(视频链→动作链)</td><td><b>不生成</b></td><td><b>联合生成</b>(一次去噪)</td><td><b>联合生成</b>(一次去噪)</td><td><b>不生成</b>(默认;规划/MBRL 时切全链)</td><td><b>异步生成</b>(后台慢钟)</td></tr>
     <tr><td>想象消费</td><td>latent</td><td>—</td><td>latent</td><td>latent</td><td>latent</td><td><b>latent,永不 decode</b></td></tr>
     <tr><td><b>what-if p(v\|a)</b></td><td>❌ 掩码禁止</td><td>❌ 权重未训</td><td>✅ 结构上支持</td><td>✅ forward dynamics API</td><td>✅ simulator 模式</td><td>❌ 视频不看动作</td></tr>
     <tr><td>value / 评估闭环</td><td>❌</td><td>❌</td><td>❌</td><td>reasoner 可判,非 value</td><td><b>✅ value + MBRL + Best-of-N</b></td><td>❌</td></tr>

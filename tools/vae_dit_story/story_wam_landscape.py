@@ -1,6 +1,6 @@
 r"""第五幕的两张图。
 
-Fig 1  六个工作放在「耦合方向 × 想象时机」二维谱系上
+Fig 1  六个工作放在「耦合方向 × 想象与执行的关系」二维谱系上
 Fig 2  支撑五条判据的关键实证数字(全部来自论文原文)
 """
 import matplotlib
@@ -23,46 +23,50 @@ RED, BLUE, GREEN, DARK, GREY, ORANGE = "#c0392b", "#2471a3", "#1e8449", "#2c3e50
 RF = "/Users/kevin/code/lingbot-va/.claude/scratch/rf/"
 
 # ============================================================ Fig 1
-fig = plt.figure(figsize=(15.4, 8.6), dpi=150)
-ax = fig.add_axes([0.155, 0.20, 0.825, 0.66])
-X = ["双向(联合去噪)", "视频先行(单向 Z→A)", "动作先行(单向 A→Z)", "无耦合(条件独立)"]
-Y = ["不做想象\n(仅训练期共训)", "按需想象\n(控制时不生成)", "同步想象\n(挂控制热路径)", "异步想象\n(后台, 脱离热路径)"]
+fig = plt.figure(figsize=(15.4, 9.0), dpi=150)
+ax = fig.add_axes([0.185, 0.205, 0.795, 0.655])
+X = ["双向(联合注意力)", "视频先行(单向 Z→A)", "动作先行(单向 A→Z)", "无耦合(条件独立)"]
+Y = ["不生成\n(想象只在训练期)", "联合生成\n(一条去噪, 视频+动作同时出)",
+     "串行生成\n(视频链跑完再跑动作链)", "异步生成\n(后台慢钟, 脱离热路径)"]
 for i in range(4):
     for j in range(4):
         ax.add_patch(Rectangle((i - 0.5, j - 0.5), 1, 1, fc="#f7f9fb" if (i + j) % 2 else "#ffffff",
                                ec="#e3e8ee", lw=1.0, zorder=0))
 ax.set_xlim(-0.5, 3.5); ax.set_ylim(-0.5, 3.5)
 ax.set_xticks(range(4)); ax.set_xticklabels(X, fontsize=10.6)
-ax.set_yticks(range(4)); ax.set_yticklabels(Y, fontsize=10.6)
+ax.set_yticks(range(4)); ax.set_yticklabels(Y, fontsize=10.2)
 ax.tick_params(length=0)
 for s in ax.spines.values():
     s.set_visible(False)
 
-WORKS = [  # (x, y, 名字, 颜色, 一行说明)
-    (0, 2, "DreamZero", RED, "block 内双向 · 单栈 · 从零训练"),
-    (0, 1, "Cosmos 3", RED, "生成塔全注意力 · 按需 forward dynamics"),
-    (1, 2, "lingbot-va", ORANGE, "动作看【预测视频】· 20+50 步串行"),
-    (2, 1, "Motus2", BLUE, "A→Z→U 因果链 · +value/MBRL"),
-    (3, 0, "FastWAM", GREEN, "视频共训 · 推理不生成 · 190 ms"),
-    (3, 3, "GlanceWAM", GREEN, "单帧 3 s 远视 · 后台 1 步 · 48 ms"),
+# (x, y, 名字, 颜色, 一行说明, 水平微调)
+WORKS = [
+    (3, 0, "FastWAM", GREEN, "视频共训, 推理不生成 · 190 ms", 0.0),
+    (2, 0, "Motus2", BLUE, "默认只出动作; 规划/MBRL 时才跑 A→Z→U", 0.0),
+    (0, 1, "DreamZero", RED, "单栈 · block 内双向 · 锁步 σ", -0.21),
+    (0, 1, "Cosmos 3", RED, "2 塔 MoT · 生成塔全注意力 · 可问 what-if", 0.21),
+    (1, 2, "lingbot-va", ORANGE, "动作看【预测视频】 · 20+50 步两段 · 本项目", 0.0),
+    (1, 3, "GlanceWAM", GREEN, "单帧 3 s 远视 · 后台 1 步 · 48 ms", 0.0),
 ]
-for x, y, name, col, note in WORKS:
-    ax.plot([x], [y], "o", ms=17, color=col, mec="w", mew=1.8, zorder=4)
-    ax.text(x, y - 0.20, name, ha="center", va="top", fontsize=12,
+for x, y, name, col, note, dx in WORKS:
+    small = abs(dx) > 0
+    ax.plot([x + dx], [y + 0.11], "o", ms=14 if small else 17, color=col,
+            mec="w", mew=1.8, zorder=4)
+    ax.text(x + dx, y - 0.03, name, ha="center", va="top", fontsize=11.4 if small else 12,
             color=col, fontweight="bold", zorder=5)
-    ax.text(x, y + 0.13, note, ha="center", va="bottom", fontsize=8.5,
-            color="#5d6d7e", zorder=5,
-            bbox=dict(fc="w", ec="none", alpha=0.72, pad=1.2))
-ax.set_ylabel("想象时机", fontsize=11.5, color=DARK, labelpad=12)
+    ax.text(x + dx, y + 0.25, note, ha="center", va="bottom", fontsize=8.0 if small else 8.5,
+            color="#5d6d7e", zorder=5, bbox=dict(fc="w", ec="none", alpha=0.75, pad=1.2))
+ax.set_ylabel("想象与执行的关系", fontsize=11.5, color=DARK, labelpad=10)
 ax.text(1.5, -0.78, "视频 ↔ 动作 的耦合方向", fontsize=11.5, color=DARK, ha="center", va="top")
-ax.set_title("六个世界-动作模型:耦合方向 × 想象时机", fontsize=15, pad=12)
+ax.set_title("六个世界-动作模型:耦合方向 × 想象与执行的关系", fontsize=15, pad=12)
 
-fig.text(0.5, 0.095,
-         "能力对照:能问 what-if $p(v|a)$ 的只有【双向】与【动作先行】两列"
-         "(DreamZero / Cosmos 3 / Motus2);带 value 与评估闭环的只有 Motus2",
+fig.text(0.5, 0.098,
+         "能问 what-if $p(v|a)$ 的只有【双向】与【动作先行】两列(DreamZero / Cosmos 3 / Motus2);"
+         "带 value 与评估闭环的只有 Motus2",
          ha="center", fontsize=10.4, color=DARK)
-fig.text(0.5, 0.035,
-         "延迟最低的是 GlanceWAM(48 ms)与 FastWAM(190 ms);把想象挂在控制热路径上的同步方案需要 1133–3812 ms",
+fig.text(0.5, 0.040,
+         "FastWAM 与 Motus2 的默认控制路径都不生成视频;DreamZero / Cosmos 3 是联合同步;"
+         "lingbot-va 是串行同步(两段);GlanceWAM 是异步后台",
          ha="center", fontsize=10.4, color=DARK)
 fig.savefig(RF + "story_wam_map.png", bbox_inches="tight")
 
