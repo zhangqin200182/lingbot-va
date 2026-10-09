@@ -41,11 +41,17 @@ SLOTS = {
     "IMG_cond":       IMG / "conditioning.png",
     "IMG_samexs":     IMG / "story_same_xs_diff_c.png",
     "IMG_mask":       IMG / "story_mask.png",
+    # ---- act 4: the two chains
+    "IMG_twochains":  IMG / "story_two_chains.png",
+    "IMG_wammap":     IMG / "story_wam_map.png",
+    "IMG_wamevidence": IMG / "story_wam_evidence.png",
+    "IMG_tfields":    IMG / "story_two_fields.png",
+    "IMG_lensrand":   IMG / "story_lens_random.png",
 }
 
 MAXW = 1250
 # smooth / colourful figures: JPEG is much smaller and looks the same on screen
-JPEG = {"story_gravity_contour.png", "story_gravity_lens.png", "story_density_field.png",
+JPEG = {"story_gravity_contour.png", "story_two_fields.png", "story_gravity_lens.png", "story_density_field.png",
         "traj_vs_dist.png", "basins.png", "conditioning.png", "arbitrary_shapes.png",
         "bell_to_two_spikes.png", "multimodal.png"}
 

@@ -7,6 +7,8 @@
 | **第一幕** | VAE:像素 ↔ `8×8×48` latent | 逐层视野 σ 从 **1.71 px → 29.16 px**(17×);相邻 latent 视野余弦 **0.9959**;48 个通道尺度差 4.79 倍 |
 | **第二幕** | DiT:先验 / 后验 / 引力场 | 计数贝叶斯(38,812 → 23,213 → **0.5981**);"为什么是平均"(10 个样本碰撞);引力矢量分解;**引力场等高线图(点源 + 等值线 + 速度箭头场)**;**从密度场到速度(样本 → 各 σ 下的高斯 → 似然 → × 先验 → 权重 → 速度)**;轨迹 vs 分布;起点轴与切口 |
 | **第三幕** | 条件 = 一块"透镜" | 只换先验;同一 `x_σ` 不同 `c` → 输出 **−0.20 / −1.40 / +1.80**;训练注意力掩码(384×384) |
+| **第四幕** | 视频链 vs 动作链 | **两条链的时序图**(共同 KV cache 的写入/读取时刻 + 掩码实测的跨模态可见性):过程解耦(独立 noise / σ 网格 / shift / 步数 / CFG / 损失),信息**单向**耦合(动作能看本 chunk 视频,视频看不到本 chunk 动作);**4.4 统一视角**:两条链 = 同一个联合分布按「视频先行」切出的两个条件切片,各自一个引力场 |
+| **第五幕** | 横向对照:6 个世界-动作模型 | **「耦合方向 × 想象时机」谱系图**(lingbot-va / FastWAM / DreamZero / Cosmos 3 / Motus2 / GlanceWAM) + **五条判据及其实证数字**(隔离 mask 71.5→**47.0**、horizon 3 s 峰值 71.6、延迟 48 ms vs 1133–3812 ms) + **哪些属于推断、哪些有实证**的诚实边界表 |
 
 ## 内嵌的 VAE 探针
 
@@ -23,7 +25,9 @@
 
 ## 使用
 
-直接用浏览器打开 `vae_dit_story.html`(图片已 base64 内嵌,可离线、可单文件分享,约 4 MB)。
+直接用浏览器打开 `vae_dit_story.html`(图片已 base64 内嵌,可离线、可单文件分享,约 3.9 MB)。
+
+> 图里的中文需要字体支持;`story_two_chains.py` 会自动挂载 macOS 的 `Arial Unicode.ttf`,其他系统请改脚本顶部那段 `addfont` 的路径。
 
 ## 重新生成
 
@@ -32,6 +36,13 @@
 MPLCONFIGDIR=/tmp/mplcache python story_figs.py                 # 视野 / 引力矢量 / 有效源 / 同输入不同c / 掩码
 MPLCONFIGDIR=/tmp/mplcache python story_gravity_contour.py      # 引力场等高线图(点源 + 等值线 + 箭头场)
 MPLCONFIGDIR=/tmp/mplcache python story_gravity_lens.py         # 加条件(透镜)后的等高线 / 箭头 / 轨迹对比
+MPLCONFIGDIR=/tmp/mplcache python story_two_chains.py           # 第四幕:视频链/动作链时序 + KV cache
+MPLCONFIGDIR=/tmp/mplcache python story_wam_landscape.py        # 第五幕:六工作谱系图 + 实证数字看板
+MPLCONFIGDIR=/tmp/mplcache python story_block_flow.py           # (备用)block 内部流程:训练 vs 推理
+MPLCONFIGDIR=/tmp/mplcache python story_blockmask.py            # (备用)BlockMask 矩阵 + 推理注意力
+MPLCONFIGDIR=/tmp/mplcache python story_clean_segments.py       # (备用)clean 段的 4×4 可见性矩阵
+MPLCONFIGDIR=/tmp/mplcache python story_train_sigma.py          # (备用)两条链训练时的 σ 分布
+MPLCONFIGDIR=/tmp/mplcache python story_unified_view.py         # 4.4:两个引力场 + 透镜的随机性
 MPLCONFIGDIR=/tmp/mplcache python story_density_to_velocity.py  # 从密度场到速度(1 维 (x,σ) 视角)
 MPLCONFIGDIR=/tmp/mplcache python story_gravity_field.py        # (可选)样本 × σ 的权重矩阵
 
@@ -61,6 +72,11 @@ python build_story.py          # 读 story_template.html + ../vae_rf_explorer/va
 | (2) | 在 σ=0.35 切一刀:每个样本一条钟形(统一放大 220 倍),**在读数处的高度 = 似然**;黑线是总密度 |
 | (3) | `权重 ∝ 似然 × 先验`:实心圈(先验相等)落在同一条过原点直线上;空心方块(透镜 0.9/0.1)分裂成**两条斜率 9:1 的线** —— **先验就是斜率** |
 | (4) | 权重 × 方向求和 → `E[x₀]=+0.730`、`v=(x_σ−E[x₀])/σ=−1.657` |
+
+`story_block_flow.py` / `story_blockmask.py` / `story_clean_segments.py` / `story_train_sigma.py`
+是第四幕的**备用素材**(已生成 PNG 放在 `docs/`,但页面里还没用):它们分别解释
+「同一个 block 在训练/推理下算什么」「BlockMask 究竟长什么样」「clean 段的四条可见性」「两条链训练时的 σ 分布」。
+需要的话可以把它们补成 4.5/4.6。
 
 `story_gravity_field.py` 是**另一种视角**(横轴 = 样本索引,纵轴 = σ,每行 = 该 σ 下的权重向量),
 能更直接看到"亮带从 600 个样本收缩到一两个";两张图互补,页面里用的是前者。

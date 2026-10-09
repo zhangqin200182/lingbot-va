@@ -33,9 +33,12 @@
   figcaption{color:var(--mut);font-size:13.5px;padding:8px 6px 2px}
   code{background:#f1f4f8;padding:1px 5px;border-radius:4px;font-size:13.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   pre{background:#0f172a;color:#e6edf3;padding:14px 16px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.6}
+  h4{font-size:16px;margin:22px 0 8px}
   table{border-collapse:collapse;width:100%;font-size:14.5px;margin:14px 0;background:#fff}
   th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
   th{background:#f5f8fb;font-weight:600}
+  td.ok{color:#1e8449;font-weight:600}
+  td.no{color:#c0392b;font-weight:600}
   .ok{color:var(--green);font-weight:600}
   .no{color:var(--red);font-weight:600}
   .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin:16px 0}
@@ -82,6 +85,8 @@
   <a href="#act1">第一幕 · VAE 与视野</a>
   <a href="#act2">第二幕 · 先验/后验/引力场</a>
   <a href="#act3">第三幕 · 条件 = 透镜</a>
+  <a href="#act4">第四幕 · 视频链与动作链</a>
+  <a href="#act5">第五幕 · 六个工作对照</a>
   <a href="#gloss">术语与边界</a>
 </div></nav>
 
@@ -359,6 +364,188 @@ latent_hs, _, action_hs, _, _ = torch.split(...)    # 条件段输出被丢弃</
 </div></section>
 
 <!-- =============================================== GLOSSARY -->
+<section id="act4"><div class="wrap">
+  <h2><span class="tag">第四幕</span>视频链与动作链:过程解耦,信息单向耦合</h2>
+  <p class="lead">这个模型的输入是"条件 + 视频 + 动作"。视频和动作各自跑一条 flow-matching 扩散链 —— <b>是两条链,不是一条联合链</b>。</p>
+
+  <figure><img src="{{IMG_twochains}}" alt="timeline of the two diffusion chains">
+    <figcaption><b>一个 chunk 内两条链的时序</b>。每个方块 = 一次 transformer 前向;方块里的数字是当前的 t(σ)。
+      红色 = 视频链(先跑),蓝色 = 动作链(后跑);最后一步都是 t=0 的 padding 步,<b>只写 cache、不走去噪步</b>,所以写进 cache 的是<b>干净</b>的 K/V。
+      <br><b>读出</b>:视频链读到的 cache 里只有【观测 + 更早 chunk 的视频/动作】—— <b>看不到本 chunk 的动作</b>(那时还不存在);
+      动作链读到的 cache 里<b>已经包含本 chunk 的视频 K/V</b>(视频链刚写进去)。<b>这就是"单向耦合"的全部机制。</b></figcaption></figure>
+
+  <h3>4.1 解耦的部分(训练)</h3>
+  <table>
+    <tr><th>维度</th><th>视频</th><th>动作</th></tr>
+    <tr><td>调度器</td><td><code>train_scheduler_latent</code>,shift = <code>snr_shift</code></td><td><code>train_scheduler_action</code>,shift = <code>action_snr_shift</code></td></tr>
+    <tr><td>shift 取值</td><td>demo / robotwin / LIBERO 都是 <b>5.0</b></td><td>demo / robotwin <b>1.0</b>;LIBERO <b>0.05</b>(极端偏向低噪声区)</td></tr>
+    <tr><td>噪声</td><td>一份 <code>randn</code></td><td><b>另一份独立</b> <code>randn</code></td></tr>
+    <tr><td>损失</td><td><code>latent_loss × training_weight</code></td><td><code>action_loss × training_weight × actions_mask</code></td></tr>
+    <tr><td>合成</td><td colspan="2"><code>loss = latent_loss + action_loss</code>(等权相加后一起反传)</td></tr>
+    <tr><td>推理步数</td><td>demo 5 / LIBERO 20 / robotwin 25</td><td>demo 10 / LIBERO 50 / robotwin 50</td></tr>
+    <tr><td>CFG</td><td><code>guidance_scale = 5</code></td><td><code>action_guidance_scale = 1</code>(动作不做 CFG)</td></tr>
+    <tr><td>输入嵌入 / 时间嵌入 / 输出投影</td><td><code>patch_embedding_mlp</code> / <code>condition_embedder</code> / <code>proj_out</code></td><td><code>action_embedder</code> / <code>condition_embedder_action</code> / <code>action_proj_out</code></td></tr>
+    <tr><td><b>共享的东西</b></td><td colspan="2"><b>同一个 30 层 transformer 骨干</b>:两路各自 embed → <b>拼成一条序列</b> → 同一套自注意力(靠掩码区分)→ 各自投影出去</td></tr>
+  </table>
+
+  <h3>4.2 耦合的部分:注意力掩码(实测)</h3>
+  <p>掩码把帧号量化时,<b>视频用偶数 <code>2c</code>、动作用奇数 <code>2c+1</code></b> —— 这个 ±1 的错位就是耦合的开关:</p>
+  <pre>frame_ids = cat([latent_frame_id // chunk_size * 2] * 2
+              + [action_frame_id // chunk_size * 2 + 1] * 2)</pre>
+  <table>
+    <tr><th>查询 → 键</th><th>结果</th><th>含义</th></tr>
+    <tr><td>noisy 动作(chunk c)→ <b>clean 视频(chunk c)</b></td><td class="ok">✅ 允许</td><td>动作依赖<b>当前</b>视频</td></tr>
+    <tr><td>noisy 动作 → clean 视频(未来 chunk)</td><td class="no">❌ 禁止</td><td>不能看未来</td></tr>
+    <tr><td>noisy 视频(chunk c+1)→ clean 动作(chunk c)</td><td class="ok">✅ 允许</td><td>视频能看<b>过去</b>的动作</td></tr>
+    <tr><td><b>noisy 视频(chunk c)→ clean 动作(chunk c)</b></td><td class="no">❌ 禁止</td><td>视频看不到<b>同 chunk</b> 的动作</td></tr>
+    <tr><td>noisy 视频 ↔ noisy 动作(任何 chunk)</td><td class="no">❌ 双向禁止</td><td>加噪的跨模态之间不通信:动作只能看<b>干净</b>视频</td></tr>
+  </table>
+
+  <h3>4.3 为什么这么设计</h3>
+  <table>
+    <tr><th>理由</th><th>体现</th></tr>
+    <tr><td>两个模态的"信噪比难度"不同</td><td>两个 scheduler 的 shift 完全不同(动作可以极端到 0.05)</td></tr>
+    <tr><td>动作要执行,精度要求高</td><td>动作步数更多(50 vs 20)</td></tr>
+    <tr><td>分层决策:先"想清楚世界",再"照着做"</td><td>视频先跑完并把 K/V 写进 cache,动作再读</td></tr>
+    <tr><td>动作是确定性执行</td><td><code>action_guidance_scale = 1</code>,不对动作做 CFG</td></tr>
+  </table>
+  <p style="background:#fff;border-left:4px solid var(--orange);padding:10px 14px;border-radius:6px">
+    <b>代价</b>(结构固有的):① 动作<b>无法反过来影响</b>视频(不能"为了做某个动作而去想象画面");
+    ② 同一 chunk 内视频看不到动作 → 它不是"动作条件化的视频预测",而更接近 <b>视频 → 动作的逆动力学</b>式结构;
+    ③ 动作质量<b>受限于视频预测质量</b>;④ 两条链各自独立随机采样,同一段视频只对应一份动作采样。
+  </p>
+  <p style="font-size:14.5px;color:var(--mut)">在"世界模型"谱系里的位置:<b>世界模型(视频)+ 逆动力学头(动作)的单向串联</b>,而<b>不是</b>联合扩散 ——
+    联合扩散会让两个模态在每一步互相看对方的<b>加噪</b>状态,这里明确禁止了。</p>
+</div></section>
+
+  <h3>4.4 收口:把两条链放回"引力场"的语言里</h3>
+  <p class="lead">前面几节都是工程细节。这一节把整个模型压回第二幕那套语言 —— <b>它不是"两个独立的扩散模型",而是<b>同一个联合分布按"视频先行"这一种因果分解切出来的两片</b>,每一片各自有一个引力场。</b></p>
+
+  <figure><img src="{{IMG_tfields}}" alt="the two gravity fields and the one arrow between them">
+    <figcaption><b>两条链 = 两个条件分布 = 两个引力场</b>。
+      <b>视频场</b> <code>p(v_t | h)</code>:源 = 数据集里的视频 chunk,透镜 = 历史 <code>h</code>(真实观测 + 过去已执行的动作),输出 = 未来一个 chunk 的视频。
+      <b>动作场</b> <code>p(a_t | h, v̂)</code>:源 = 数据集里的动作 chunk,透镜 = <b>历史 + 本轮预测的视频 <code>v̂</code></b>。
+      两个场之间<b>只有一条通路</b>(绿箭头),就是掩码里那条 <code>2c &lt; 2c+1</code>;
+      反方向(红虚线)被掩码禁止 —— 因为 <code>2c+1 &lt; 2c</code> 不成立。</figcaption></figure>
+
+  <table>
+    <tr><th>引力场的概念(第二幕)</th><th>在这个模型里的具体对应</th></tr>
+    <tr><td><b>源</b>(每个样本一个点源)</td><td>数据集里的一个 <b>视频 chunk</b>(视频场)/ 一个 <b>动作 chunk</b>(动作场)<br>在 48×4×8×16 / 30×4×4×1 维空间里的一个点</td></tr>
+    <tr><td><b>引力场</b>(源按先验叠加出的密度场)</td><td>视频场:<code>p(v | h)</code>;动作场:<code>p(a | h, v̂)</code><br>各自的引力场只由<b>自己那个条件分布</b>决定</td></tr>
+    <tr><td><b>透镜</b>(换先验 = 重新加权源)</td><td><b>历史 <code>h</code></b>(cache)、以及动作场独有的 <code>v̂</code>、文本 prompt<br>乘性、<b>不造源</b>、能把源压到 0(等于删除)</td></tr>
+    <tr><td><b>读数 <code>x_σ</code></b></td><td>当前正在去噪的那个 latent;每一帧有自己的 <code>σ</code></td></tr>
+    <tr><td><b>合成方向 / 速度 <code>v</code></b></td><td>每一步网络输出 <code>v = (x_σ − E[x₀|x_σ,σ,cond])/σ</code><br>视频链走 <code>self.scheduler</code>,动作链走 <code>action_scheduler</code></td></tr>
+  </table>
+
+  <h4>两条链的"透镜"性质不一样</h4>
+  <table>
+    <tr><th></th><th>透镜由什么决定</th><th>性质</th></tr>
+    <tr><td><b>视频场</b></td><td>真实观测视频 + 过去已执行的动作</td><td><b>确定的</b>(给定历史就是确定的)</td></tr>
+    <tr><td><b>动作场</b></td><td>上面这些 <b>+ 本轮预测出来的视频 <code>v̂</code></b></td><td><b>随机的</b> —— <code>v̂</code> 是视频场的一次采样</td></tr>
+  </table>
+  <p>所以动作链实际在采的是把视频采样积掉之后的边缘分布:</p>
+  <pre>p(a_t | h)  =  ∫ p(a_t | h, v_t) · p(v_t | h) dv_t
+                                    ↑ 推理时用"自己生成的那一个 v̂"代替这次积分</pre>
+
+  <figure><img src="{{IMG_lensrand}}" alt="the action field's lens is a random variable">
+    <figcaption><b>唯一的信息差,用引力场的语言说就是:动作场的透镜是一次采样。</b>
+      <b>左(训练)</b>:透镜用的是数据集里<b>那一个真值 <code>v</code></b> —— 它和动作来自同一段真实轨迹,天然对齐,所以动作后验是<b>确定的</b>。
+      <b>右(推理)</b>:透镜用的是视频链<b>采样出来的 <code>v̂</code></b> —— 换一次采样,后验就换一个位置,动作输出跟着变(红色双向箭头)。
+      <b>注意这不是结构性错误</b>:<code>∫p(a|h,v)p(v|h)dv</code> 本来就是应该积掉的;问题是<b>用自己分布里的样本替代了数据分布里的样本</b> —— 只要视频场够准,这个替代就够准。</figcaption></figure>
+
+  <h4>这个框架推出来的两个结论</h4>
+  <table>
+    <tr><th>结论</th><th>为什么</th></tr>
+    <tr><td><b>A. 模型答不了"what-if"</b><br>"如果我做这个动作,画面会变成什么?"</td><td>回答它需要 <code>p(v_t | h, a_t)</code>,也就是需要 <code>noisy 视频 → 同 chunk 的 clean 动作</code> 这条边;而掩码里 <code>2c+1 &lt; 2c</code> 不成立。<br><b>这是"视频先跑、动作后跑"这个顺序的必然代价</b>,不是训练技巧问题 —— 要打开它得改掩码。</td></tr>
+    <tr><td><b>B. "两个独立引力场"只是目标层面的理想化</b></td><td>目标上:两个场分别由各自的条件分布决定 ✅。<br>实现上:两条链<b>共用同一个 30 层骨干</b>,两个 loss 的梯度在共享参数里相加(多任务学习)。<br>所以<b>信息流是单向的,梯度是双向的</b>。</td></tr>
+  </table>
+
+  <p style="background:#fff;border-left:4px solid var(--green);padding:10px 14px;border-radius:6px">
+    <b>一句话收口</b>:<br>
+    两条链 = <b>同一个联合分布的两个条件切片</b>,各自是一个引力场;<br>
+    历史(以及动作场独有的 <code>v̂</code>)是作用在场上的<b>多变的透镜</b>;<br>
+    每一步去噪 = 在那个 <code>σ</code> 特有的场里,取当前读数处的<b>加权合成方向</b>;<br>
+    而"谁先谁后"这个因果选择,就写在 <code>frame_id</code> 那个 <b>±1 的错位</b>里。
+  </p>
+
+<section id="act5"><div class="wrap">
+  <h2><span class="tag">第五幕</span>横向对照:六个世界-动作模型的六个设计点</h2>
+  <p class="lead">前面四幕讲的都是本项目的机制。这一节把同一套工具(引力场 / 透镜 / 耦合方向 / 记忆 / 评估)用到 6 个近期工作上,
+    并且<b>把"实证"和"推断"分开</b>——凡是没有消融支撑的,我会明确标出来。</p>
+
+  <figure><img src="{{IMG_wammap}}" alt="six world-action models: coupling direction vs imagination timing">
+    <figcaption><b>把六个工作放在「耦合方向 × 想象时机」两张轴上。</b>
+      横轴是<b>视频 ↔ 动作的信息流方向</b>(双向 / 视频先行 / 动作先行 / 无耦合);纵轴是<b>想象发生在什么时候</b>(不做 / 按需 / 同步挂热路径 / 异步后台)。
+      <br><b>能问 what-if <code>p(v|a)</code> 的只有【双向】与【动作先行】两列</b>(DreamZero / Cosmos 3 / Motus2);<b>带 value 与评估闭环的只有 Motus2</b>;
+      延迟最低的是 GlanceWAM(48 ms)与 FastWAM(190 ms),而把想象挂在控制热路径上的同步方案要 1133–3812 ms。</figcaption></figure>
+
+  <h3>5.1 六方对照</h3>
+  <table>
+    <tr><th></th><th>lingbot-va(本项目)</th><th>FastWAM</th><th>DreamZero</th><th>Cosmos 3</th><th>Motus2</th><th>GlanceWAM</th></tr>
+    <tr><td>骨干/流</td><td>1 骨干 + 模态专属头</td><td>MoT 双流(3072/1024)</td><td>1 栈(video/action/state)</td><td>2 塔(AR reasoner + DM generator)</td><td>1 主干(3 接口)+ 轻量触觉塔</td><td>1 主干 + 轻量动作头</td></tr>
+    <tr><td><b>耦合方向</b></td><td><b>视频先行</b>(动作看预测视频)</td><td><b>无</b>(动作只看当前帧)</td><td><b>双向</b>(同 block)</td><td><b>双向</b>(生成塔内全注意力)</td><td><b>动作先行</b> A→Z→U</td><td><b>视频先行</b>(IDM,条件是远视帧)</td></tr>
+    <tr><td>想象内容</td><td>每 chunk 稠密视频</td><td>—</td><td>每 block 视频</td><td>整窗口 video+audio+action</td><td>按需 rollout</td><td><b>单帧、~3 s 远未来</b></td></tr>
+    <tr><td>想象时机</td><td>同步(必须)</td><td>不做</td><td>同步</td><td>按需</td><td>按需</td><td><b>异步后台(慢钟)</b></td></tr>
+    <tr><td>想象消费</td><td>latent</td><td>—</td><td>latent</td><td>latent</td><td>latent</td><td><b>latent,永不 decode</b></td></tr>
+    <tr><td><b>what-if p(v\|a)</b></td><td>❌ 掩码禁止</td><td>❌ 权重未训</td><td>✅ 结构上支持</td><td>✅ forward dynamics API</td><td>✅ simulator 模式</td><td>❌ 视频不看动作</td></tr>
+    <tr><td>value / 评估闭环</td><td>❌</td><td>❌</td><td>❌</td><td>reasoner 可判,非 value</td><td><b>✅ value + MBRL + Best-of-N</b></td><td>❌</td></tr>
+    <tr><td>记忆</td><td><b>KV cache(~15 chunk)+ 真值重锚</b></td><td>模型外(重规划 + 集成)</td><td>block-causal AR</td><td>chunk 化</td><td>sliding / global AR / hybrid</td><td>观测历史 + 老化容忍训练</td></tr>
+    <tr><td>控制延迟</td><td>20+50 步串行</td><td>190 ms</td><td>—</td><td>1133–3812 ms(同步)</td><td>—</td><td><b>48 ms</b></td></tr>
+    <tr><td>骨干来源</td><td>Wan2.2</td><td>Wan2.2</td><td>自研</td><td>自研 MoT</td><td>Wan2.2-TI2V-5B</td><td>SkyReels-V2-DF 1.3B</td></tr>
+  </table>
+
+  <figure><img src="{{IMG_wamevidence}}" alt="key empirical numbers behind the five criteria">
+    <figcaption><b>五条判据背后的实证数字</b>(全部取自论文原文):① 想象有用但要选对形式;② 想象必须隔离(最硬的证据);③ 太近没用、3 s 达峰值;④ 想象别挂热路径。</figcaption></figure>
+
+  <h3>5.2 五条判据(附证据)</h3>
+  <table>
+    <tr><th>判据</th><th>证据</th><th>来源</th></tr>
+    <tr><td><b>① 耦合方向对"控制性能"影响不大,对"能力"影响巨大</b></td>
+      <td>FastWAM 的三个变体(uncond / joint / idm)<b>打平</b>;但只有双向或动作先行才能问 what-if</td><td>FastWAM</td></tr>
+    <tr><td><b>② 想象别挂在控制热路径上</b></td>
+      <td>FastWAM 直接不做(190 ms);GlanceWAM 异步后台 1 步采样(控制路径 48 ms);同步方案 1133–3812 ms(24–80×)</td>
+      <td>FastWAM / GlanceWAM</td></tr>
+    <tr><td><b>③ 想象可以当只读条件,但不能污染观测/历史表示</b></td>
+      <td>GlanceWAM 去掉隔离 mask 改成 bidirectional:71.5% → <b>47.0%</b>;Motus2 的 value query 只读且对其他 token 隐藏;lingbot-va 用独立 clean 段</td>
+      <td>GlanceWAM / Motus2 / 本项目代码</td></tr>
+    <tr><td><b>④ 想象的 horizon 要匹配任务的 subgoal 尺度</b></td>
+      <td>RoboCasa:纯共训 0.8 s→1.6–2.4 s 是 63.1→65.7;视觉前瞻 1.4 s→3.0 s 是 66.3→<b>71.6(峰值)</b>,3.8 s 平台(71.1)</td>
+      <td>GlanceWAM</td></tr>
+    <tr><td><b>⑤ 视频的价值主要在训练期共训/表征,而不在推理期生成</b></td>
+      <td>FastWAM:切掉测试时想象基本不掉分,<b>切掉视频共训掉得最多</b>;GlanceWAM 的纯共训(无前瞻)也受益于"想远一点"(63.1→65.7)</td>
+      <td>FastWAM / GlanceWAM</td></tr>
+  </table>
+
+  <h3>5.3 属于推断、还没有实证的部分(诚实边界)</h3>
+  <table>
+    <tr><th>说法</th><th>状态</th></tr>
+    <tr><td>"Cosmos 3 把 AR 塔与 DM 塔连起来带来很大提升"</td><td><b>推断</b>。它是架构描述,没有任何消融;而且这份仓库是文档/cookbook(无模型源码),AR 塔是否参与联合训练、梯度是否回流都看不到。要定量只能做"用冻结文本 embedding 替换 <code>h_AR</code>"这类消融。</td></tr>
+    <tr><td>"共享骨干的联合训练带来模态互惠"</td><td><b>推断</b>。理论上成立(梯度通过共享注意力互流),但没有看到针对性消融。</td></tr>
+    <tr><td>"lingbot-va 里动作条件于预测视频这条边贡献很大"</td><td><b>推断,且可能有反证</b>。FastWAM 的 idm 变体结构相同却打平;要确认得把视频链步数降到 0 做对照实验。</td></tr>
+    <tr><td>"稀疏(单帧)远视比稠密远视更好"</td><td><b>未验证</b>。GlanceWAM 只扫了 horizon,没做"单帧 vs 多帧"的稠密远视对照。</td></tr>
+  </table>
+
+  <p style="background:#fff;border-left:4px solid var(--green);padding:10px 14px;border-radius:6px">
+    <b>一句话收口</b>:<br>
+    想象的净收益 ≈ <b>该尺度上未来的信息量 − 预测误差的代价 − 延迟代价</b>;<br>
+    它必须以 <b>只读、隔离、异步、稀疏、latent 消费</b> 的方式使用;<br>
+    而 <b>训练期视频共训几乎总是值得,推理期想象是按需的奢侈品</b>。<br>
+    能力上分水岭很清晰:<b>要能提问(what-if / 规划 / 自我改进),就必须保留"动作 → 视频"这条边</b>(Cosmos 3 / Motus2);<br>
+    <b>只做闭环控制,则可以彻底省掉它</b>(FastWAM / GlanceWAM),代价是失去可提问性。
+  </p>
+
+  <h3>5.4 六个工作的出处</h3>
+  <table>
+    <tr><th>工作</th><th>出处</th></tr>
+    <tr><td>LingBot-VA(本项目)</td><td><a href="https://arxiv.org/abs/2601.21998" target="_blank" rel="noopener">arXiv:2601.21998</a> · Causal World Modeling for Robot Control</td></tr>
+    <tr><td>FastWAM</td><td><a href="https://arxiv.org/abs/2603.16666" target="_blank" rel="noopener">arXiv:2603.16666</a> · Do World Action Models Need Test-time Future Imagination?</td></tr>
+    <tr><td>DreamZero</td><td><a href="https://arxiv.org/abs/2602.15922" target="_blank" rel="noopener">arXiv:2602.15922</a> · World Action Models Are Zero-Shot Policies(NVIDIA GEAR)</td></tr>
+    <tr><td>Cosmos 3</td><td><a href="https://research.nvidia.com/labs/cosmos-lab/cosmos3/technical-report.pdf" target="_blank" rel="noopener">技术报告</a> · <a href="https://huggingface.co/collections/nvidia/cosmos3" target="_blank" rel="noopener">HuggingFace 模型集</a></td></tr>
+    <tr><td>Motus2</td><td><a href="https://arxiv.org/abs/2608.30237" target="_blank" rel="noopener">arXiv:2608.30237</a> · A Self-Evolving General World Model for Dexterous Manipulation</td></tr>
+    <tr><td>GlanceWAM</td><td><a href="https://arxiv.org/abs/2608.23927" target="_blank" rel="noopener">arXiv:2608.23927</a> · Sparse Test-Time Imagination for World-Action Models</td></tr>
+  </table>
+</div></section>
+
 <section id="gloss"><div class="wrap">
   <h2>术语、五个易错点与准确性边界</h2>
 
