@@ -9,6 +9,7 @@
 | **第三幕** | 条件 = 一块"透镜" | 只换先验;同一 `x_σ` 不同 `c` → 输出 **−0.20 / −1.40 / +1.80**;训练注意力掩码(384×384) |
 | **第四幕** | 视频链 vs 动作链 | **两条链的时序图**(共同 KV cache 的写入/读取时刻 + 掩码实测的跨模态可见性):过程解耦(独立 noise / σ 网格 / shift / 步数 / CFG / 损失),信息**单向**耦合(动作能看本 chunk 视频,视频看不到本 chunk 动作);**4.4 统一视角**:两条链 = 同一个联合分布按「视频先行」切出的两个条件切片,各自一个引力场 |
 | **第五幕** | 横向对照:6 个世界-动作模型 | **「耦合方向 × 想象与执行的关系」谱系图**(lingbot-va / FastWAM / DreamZero / Cosmos 3 / Motus2 / GlanceWAM) + **五条判据及其实证数字**(隔离 mask 71.5→**47.0**、horizon 3 s 峰值 71.6、延迟 48 ms vs 1133–3812 ms) + **哪些属于推断、哪些有实证**的诚实边界表 |
+| **附录 A** | Flow-GRPO 从 v 到可优化的随机策略 | 15 小节 / 27 张图:ODE 与 SDE 定义 → Step 1–7 推导 → 补偿的账 → 密度相消 → 通量守恒 → 每步 log-prob → GRPO 的 loss 与优势 → 运气与基线(Stein 恒等式)→ "不会让轨迹变歪" + 诚实边界清单 |
 
 ## 内嵌的 VAE 探针
 
@@ -38,6 +39,34 @@ MPLCONFIGDIR=/tmp/mplcache python story_gravity_contour.py      # 引力场等�
 MPLCONFIGDIR=/tmp/mplcache python story_gravity_lens.py         # 加条件(透镜)后的等高线 / 箭头 / 轨迹对比
 MPLCONFIGDIR=/tmp/mplcache python story_two_chains.py           # 第四幕:视频链/动作链时序 + KV cache
 MPLCONFIGDIR=/tmp/mplcache python story_wam_landscape.py        # 第五幕:六工作谱系图 + 实证数字看板
+# ---- 附录 A:Flow-GRPO(27 张图)----
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_ode_sde_basics.py   # ODE/SDE 定义 + 补偿系数实验
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_vstar_fig.py        # 那一步:v* 为什么是条件期望
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_vstar_table_fig.py  # 把那张表画出来(反推 ε → 权重 → 加权)
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_step2_fig.py        # 两个恒等式(score 是什么)
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_marginal_fig.py     # 全概率与贝叶斯
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_step3_fig.py        # Step 3:ODE 合格证
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_step4_fig.py        # Step 4:一族等价 SDE
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_compensation_ledger.py  # 一步的账 + 方差轨迹
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_fp_cancel_fig.py    # 密度层面的相消(p(log p)'=p')
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_flux_bridge_fig.py  # 通量 = 密度 × 速度
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_continuity_fig.py   # ∂_σp=−∂_xF 怎么读
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_flux_why_fig.py     # 算通量的意义
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_flux_total_fig.py   # 总通量与 ODE 完全相同
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_p_meaning_fig.py    # p 就是概率密度
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_mean_mode_fig.py    # 均值 ≠ 众数
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_v_score_dir_fig.py  # v 与 score 的方向
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_v_drift_noise_fig.py # 系数分解 + 组内基线
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_ode_sde_figs.py     # 前向插值 + 两条反演路径
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_logprob_fig.py      # 每步 log-prob + loss
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_compute_fig.py      # GRPO 的完整计算链
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_what_fig.py         # GRPO 改了什么
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_baseline_fig.py     # 基线扣掉了什么
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_shift_fig.py        # 平移不变性
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_two_cancel_fig.py   # 两个"抵消"别混
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_rl_vs_flow_fig.py   # RL 会不会破坏 flow matching
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_push_mean_fig.py    # RL 在推均值(1 维 toy 真跑)
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_no_wiggle_fig.py    # 不会变歪(Stein 恒等式)
 MPLCONFIGDIR=/tmp/mplcache python story_block_flow.py           # (备用)block 内部流程:训练 vs 推理
 MPLCONFIGDIR=/tmp/mplcache python story_blockmask.py            # (备用)BlockMask 矩阵 + 推理注意力
 MPLCONFIGDIR=/tmp/mplcache python story_clean_segments.py       # (备用)clean 段的 4×4 可见性矩阵

@@ -87,6 +87,7 @@
   <a href="#act3">第三幕 · 条件 = 透镜</a>
   <a href="#act4">第四幕 · 视频链与动作链</a>
   <a href="#act5">第五幕 · 六个工作对照</a>
+  <a href="#appendixA">附录 A · Flow-GRPO</a>
   <a href="#gloss">术语与边界</a>
 </div></nav>
 
@@ -545,6 +546,286 @@ latent_hs, _, action_hs, _, _ = torch.split(...)    # 条件段输出被丢弃</
     <tr><td>GlanceWAM</td><td><a href="https://arxiv.org/abs/2608.23927" target="_blank" rel="noopener">arXiv:2608.23927</a> · Sparse Test-Time Imagination for World-Action Models</td></tr>
   </table>
 </div></section>
+
+  <section id="appendixA"><div class="wrap">
+  <h2><span class="tag">附录 A</span>Flow-GRPO:从 flow 的 <code>v</code> 到可优化的随机策略</h2>
+  <p class="lead">前面五幕讲的是本项目和六个世界-动作模型。这个附录讲**另一条线**:如何把 flow 模型本身变成一个可以做强化学习的随机策略
+    —— [Flow-GRPO](https://arxiv.org/abs/2505.05470)(代码 <code>flow_grpo</code>)。<br>
+    选它的原因是:<b>它把前面所有概念(引力场 / score / 透镜 / 密度记账)一次性用上了</b> —— 而且每一步都能用代码和数值验证。
+    本附录里所有数字都是在 1 维或解析可算的 toy 上<b>真跑出来的</b>,不是手画。</p>
+
+  <div style="background:#fff;border-left:4px solid var(--green);padding:10px 14px;border-radius:6px">
+    <b>一句话</b>:把 flow 的确定性 ODE 换成一个<b>边缘分布完全相同</b>的随机 SDE ⇒ 每一步都有简单可算的高斯似然
+    ⇒ 才能用组内相对奖励算策略梯度 ⇒ 把那些"<b>很难写成损失、但很容易打分</b>"的目标学进来。
+  </div>
+
+  <h3>A.1 要解决的问题:为什么必须换采样器</h3>
+  <table>
+    <tr><th></th><th>ODE 采样(flow 原生)</th><th>为什么不能直接做 RL</th></tr>
+    <tr><td>给定初始噪声 ε</td><td><b>轨迹唯一</b></td><td>策略退化成 δ 分布,没有"似然"可言</td></tr>
+    <tr><td>每步似然</td><td>δ 函数(无法使用)</td><td>构造不出重要性比 <code>ρ</code></td></tr>
+    <tr><td>探索来源</td><td>只有初始噪声一个</td><td>论文 §5.3 实测:随机性↓ → 奖励提升明显变慢</td></tr>
+  </table>
+  <figure><img src="{{IMG_fg_ode_vs_sde_basic}}" alt="ODE vs SDE">
+    <figcaption><b>先补定义。</b><b>ODE</b> = 只有确定速度,给定起点轨迹唯一;<b>SDE</b> = 速度 + 每步随机推力 <code>g·dW</code>,每次都不一样。
+      本附录要做的,就是"在<b>不改变分布</b>的前提下,把随机推力加进去"。</figcaption></figure>
+
+  <h3>A.2 Step 1:插值 → 条件平均速度 <code>v</code></h3>
+  <p>约定:<code>σ=0</code> 干净数据,<code>σ=1</code> 纯噪声;生成方向是 σ <b>递减</b>。插值定义为</p>
+  <pre>x_σ = (1−σ)·x₀ + σ·ε ,   x₀ ~ p_data ,   ε ~ N(0,I)</pre>
+  <p>对 σ 求导得 <code>dx_σ/dσ = ε − x₀</code>(逐样本成立);取条件期望就是流匹配的训练目标:</p>
+  <pre>v*(x,σ) = E[ ε − x₀ | x_σ = x ] = ( x − E[x₀ | x_σ = x] ) / σ</pre>
+  <figure><img src="{{IMG_fg_vstar_step}}" alt="why conditional expectation">
+    <figcaption><b>为什么是条件期望。</b>(a) 两个式子是<b>同一个数</b>:<code>ε−x₀ = (x_σ−x₀)/σ</code>(数值代入验证);
+      (b) 同一个读数 <code>(x_σ,σ)</code> 上,两个候选数据点给出<b>方向相反</b>的速度,而确定性场只能输出一个数 ⇒ 只能取<b>后验加权平均</b>。</figcaption></figure>
+  <figure><img src="{{IMG_fg_vstar_table}}" alt="the table explained">
+    <figcaption><b>那张表拆开看。</b>反推 ε(由 <code>x_σ</code> 与候选 <code>x₀</code> 唯一确定)→ 算速度 → 按 <b>先验×似然</b> 加权 → 相加。
+      数值闭环:<code>Σwₖvₖ = −0.1948</code> 与 <code>(x_σ−E[x₀])/σ = −0.1948</code> 完全一致。</figcaption></figure>
+
+  <h3>A.3 Step 2:两个恒等式(后面全靠它们)</h3>
+  <p>对 <code>p_σ(x) = ∫ p_data(x₀)·N(x; (1−σ)x₀, σ²) dx₀</code> 求梯度,认出两个积分(<b>全概率</b>与<b>贝叶斯</b>),就得到:</p>
+  <pre>(a)  Tweedie:      E[x₀ | x_σ] = ( x + σ²·∇log p_σ ) / (1−σ)
+(b)  score ↔ v:    ∇log p_σ(x) = − ( x + (1−σ)·v(x,σ) ) / σ      ← 最关键的一行</pre>
+  <figure><img src="{{IMG_fg_tweedie_two_identities}}" alt="two identities">
+    <figcaption><b>(a) score 是什么</b>:密度的"上坡方向",峰值处为 0。<b>(b) 恒等式 (a)</b>:从读数走 σ² 再除 (1−σ),得到后验均值。
+      <b>(c) 恒等式 (b)</b>:直接用 <code>v</code> 反算的 score 与对密度求导的结果在三个点上完全一致 ⇒
+      <b>做 SDE 不需要第二个网络</b>。</figcaption></figure>
+  <figure><img src="{{IMG_fg_marginal_bayes}}" alt="marginal and Bayes">
+    <figcaption><b>那两个积分到底是什么。</b>(a) <b>全概率</b>:把不知道的 <code>x₀</code> 积分掉,得到 p_σ(x);
+      (b) <b>贝叶斯</b>:联合 ÷ 边缘 = 条件(分母就是第一个积分);(c) 期望 = 分子 ÷ 分母。</figcaption></figure>
+
+  <h3>A.4 Step 3:给 ODE 采样器发"合格证"</h3>
+  <p><b>训练</b>只保证"每个点上 <code>v</code> 准"(局部),<b>采样</b>需要"整体分布对"(全局)—— 这两件事不等价,必须证:</p>
+  <pre>命题:若 v = v*,且 x 按 dx = v* dσ 从 σ=1 走到 σ=0,
+     则每个 σ 时刻 x 的分布都等于 p_σ ⟹ σ=0 时等于 p_data。
+
+证法:取任意测试函数 h
+  插值族: d/dσ E[h(x_σ)] = E[∇h·(ε−x₀)] = E[∇h·E[ε−x₀|x_σ]] = E[∇h·v*]     ← 塔性质
+  ODE 族: d/dσ E[h(y_σ)] = E[∇h·v*]
+  对所有 h 相同 + 起点相同 ⟹ 分布处处相同 ✓</pre>
+  <figure><img src="{{IMG_fg_ode_distribution}}" alt="ODE reproduces p_sigma">
+    <figcaption><b>轨迹不同,分布相同。</b>(a) 灰直线是插值路径、蓝曲线是 ODE 轨迹;(b)(c)
+      20000 条 ODE 轨迹在 σ=0.5 与 σ=0 处的直方图与解析 p_σ <b>完全重合</b>
+      (σ=0 落 +1 模态比例 0.498,真值 0.5)。stdlib 差 ~0.5% 来自 200 步 Euler 离散化。</figcaption></figure>
+
+  <h3>A.5 Step 4–5:一族等价 SDE</h3>
+  <p>把 ODE 换成一般 SDE <code>dx = f dσ + g dW</code>,用<b>同一张考卷</b>(测试函数)解出漂移必须是什么:</p>
+  <pre>d E[h] = E[∇h·f] dσ + (g²/2)·E[Δh] dσ ,   E[Δh] = −E[∇h·∇log p]
+令其等于 Step 3 的 E[∇h·v*] dσ  ⟹
+        f = v* + (g²/2)·∇log p_σ          … σ 递增方向(加噪)
+换到生成方向(σ 递减,负号来自反向时间):
+        f = v* − (g²/2)·∇log p_σ          … 代码里真正用的</pre>
+  <p><b>结构</b>:<code>g</code> 是我们自由选的,<code>f</code> 被 <code>g</code> 唯一决定;`g=0` 就退回 ODE。</p>
+  <figure><img src="{{IMG_fg_equivalent_sde_family}}" alt="family of equivalent SDEs">
+    <figcaption><b>一族等价采样器。</b>(a) noise_level 越大越随机;(b) 三档噪声的<b>终点分布完全一样</b>(都等于 p_data)
+      —— 这是"边缘分布不变"的直接检验。<b>注</b>:论文取 <code>g(σ)=√(σ/(1−σ))·noise_level</code>,
+      它在 σ→0 自动衰减到 0;改用常数 g 时 score 变尖会把数值积分炸掉(实测 |x| 发散)。</figcaption></figure>
+
+  <h3>A.6 补偿机制:一步的账 + 密度层面的相消</h3>
+  <div style="background:#fff;border-left:4px solid var(--orange);padding:10px 14px;border-radius:6px">
+    <b>常见误解</b>:"在 <code>v</code> 上加一个密度方向的偏移,结果不就偏了吗?"<br>
+    <b>答</b>:那一项不是随手加的偏移,而是<b>噪声的精确补偿量</b> —— 而且补偿发生在<b>同一步里</b>,不是"先走偏再修回来"。
+    少补或多补,分布确实会坏(见下表)。
+  </div>
+  <table>
+    <tr><th>补偿系数 <code>c</code>(漂移里用 <code>c·(g²/2)∇log p</code>)</th><th>终点 std(真值 1.000)</th><th>结果</th></tr>
+    <tr><td>0(只加噪声,不补偿)</td><td><b>1.645</b></td><td>分布被<b>抹宽 64%</b></td></tr>
+    <tr><td>0.5</td><td>1.259</td><td>仍被抹宽</td></tr>
+    <tr><td><b>1.0(精确补偿)</b></td><td><b>1.004</b></td><td>✅ 正确</td></tr>
+    <tr><td>1.5</td><td>0.835</td><td>被压窄</td></tr>
+    <tr><td>2.0</td><td>0.745</td><td>被压窄</td></tr>
+  </table>
+  <figure><img src="{{IMG_fg_compensation_coef}}" alt="coefficient matters">
+    <figcaption><b>系数不能乱取。</b>(a) 四种系数下的终点分布;(b) std 随 c 单调下降,<b>恰好穿过 (c=1, std=1.000)</b>。</figcaption></figure>
+  <p><b>同一步的账</b>(σ: 0.5 → 0.49,数据 N(0,1),g=0.5):</p>
+  <table>
+    <tr><th>一步里的项</th><th>对<b>方差</b>的贡献</th></tr>
+    <tr><td>起点方差</td><td>0.5000</td></tr>
+    <tr><td>这一步注入的<b>噪声</b> <code>g²|dσ|</code></td><td><b>+0.0025</b></td></tr>
+    <tr><td>偏移项把方差收紧 <code>2Δa·V·|dσ|</code>,<code>Δa=g²/(2V)=0.25</code></td><td><b>−0.0025</b></td></tr>
+    <tr><td><b>净变化</b></td><td><b>0.0000</b>(= 解析要求)</td></tr>
+  </table>
+  <figure><img src="{{IMG_fg_compensation_ledger}}" alt="one-step ledger">
+    <figcaption><b>补偿是怎么发生的。</b>(a) 方差轨迹:c=1 紧贴真值,c&lt;1 越走越宽、c&gt;1 越走越窄;
+      (b) 一步的账,噪声撑大多少、偏移就压回多少;(c) 密度层面同理(下一节)。</figcaption></figure>
+  <figure><img src="{{IMG_fg_fp_cancellation}}" alt="Fokker-Planck cancellation">
+    <figcaption><b>密度层面的相消,拆到最细。</b>关键只有一行恒等式:<code>p×(log p)' = p'</code>
+      (乘以 p 之后 log 自己消失)⇒ 偏移项贡献的正好是 <code>−(g²/2)p''</code>,与噪声项的 <code>+(g²/2)p''</code> 逐点相消。
+      图 (c) 是两条恒等式在 5 个点上的数值核对。</figcaption></figure>
+
+  <h3>A.7 从"粒子"到"密度":通量与收支</h3>
+  <p>很多人卡在这里:前面一直在讲"一个粒子怎么走",密度方程从哪来?答案:**中间只隔着一个"通量 = 密度 × 速度"**。</p>
+  <pre>离散(数格子):  Δp_i = − (F_i − F_{i−1})/Δx · Δσ        "这个格子 = 左边流进 − 右边流出"
+连续(取极限):  ∂_σ p = − ∂_x F ,   F = f·p = 密度 × 速度
+噪声也是通量:  F_diff = −(g²/2)·∂_x p    ⇒  ∂_σ p = −∂_x(f p) + (g²/2) p''</pre>
+  <figure><img src="{{IMG_fg_flux_bridge}}" alt="from velocity to flux">
+    <figcaption><b>通量就是这个。</b>(a) <code>F = f×p</code>:密度大、速度大 → 流量就大;
+      (b) 最土的记账:中间格子的净变化 = 流入 − 流出 → 连续化就是那个方程(没有新物理);
+      (c) 两种通量与两个视角的对照。</figcaption></figure>
+  <figure><img src="{{IMG_fg_continuity_meaning}}" alt="meaning of continuity">
+    <figcaption><b>逐符号读</b><code>∂_σ p = −∂_x F</code>:某处密度的变化速度 = 左边流进 − 右边流出。
+      σ=0.7 的例子:F 变号位置 |x|=√V=0.7616,中心区密度变疏、尾巴变密 ⇒ 分布变宽(与"加噪变宽"一致)。</figcaption></figure>
+  <figure><img src="{{IMG_fg_flux_why}}" alt="why flux">
+    <figcaption><b>那算通量的意义是什么?</b>只看密度曲线,你只能看到"变了/没变";写成通量,"抵消"就变成<b>可以逐点对账</b>的等式。
+      σ=0.5 时真值密度本该完全不变,不补偿却会变(中心 −0.141、尾巴 +0.052)。</figcaption></figure>
+  <figure><img src="{{IMG_fg_flux_total}}" alt="total flux unchanged">
+    <figcaption><b>通量层面的验证。</b>漂移通量(含偏移)与扩散通量<b>各自都不为零</b>(最大 0.06),但处处精确反号,
+      总和恒等于 ODE 的总通量 <code>v*p</code>。<b>通量是原因,密度变化是结果</b> —— 总通量相同,密度变化必然相同。</figcaption></figure>
+
+  <h3>A.8 三个容易混的地方</h3>
+  <h4>p 就是概率密度</h4>
+  <figure><img src="{{IMG_fg_p_is_probability}}" alt="p is probability density">
+    <figcaption>(a) 高度是密度,<b>面积才是概率</b>;N 个样本落在条带里的个数 ≈ N·p·dx(实测 504 vs 期望 564);
+      (b) 这一路上出现过的 5 个 p;(c) 两个视角的桥:<code>∫h(x)p(x)dx = E[h(x)]</code> ——
+      Step 3 的证明就是这座桥。</figcaption></figure>
+  <h4>均值 vs 众数</h4>
+  <figure><img src="{{IMG_fg_mean_vs_mode}}" alt="mean vs mode">
+    <figcaption><code>E[x₀|x_σ]</code> 是后验<b>均值</b>,不是"最可能来自哪个数据点"(那是<b>众数</b>)。
+      (a) 离散两点:众数 +1、均值 +0.1974(不是数据点);(b) 连续:均值可能落在后验低谷(密度只有众数处的 1/650);
+      (c) 为什么必须是均值 —— 流匹配的 L2 损失的最优解就是条件均值。</figcaption></figure>
+  <h4>v 与 score 的方向</h4>
+  <figure><img src="{{IMG_fg_v_vs_score}}" alt="v vs score direction">
+    <figcaption><code>v = dx/dσ</code> 是<b>加噪方向</b>的速度,所以 <code>v</code> 含<b>反</b> score 分量(加噪把人推离高密度),
+      而生成方向 <code>u=−v</code> 含<b>正</b> score 分量。σ=0.5(边缘单峰)时两者<b>相反</b>;σ=0.25(边缘双峰)时同向。
+      分解:<code>v = −x/(1−σ) − [σ/(1−σ)]∇log p</code>(收缩项 + 反 score 项)。</figcaption></figure>
+
+  <h3>A.9 每个参数为什么没被漂移/噪声淹没</h3>
+  <p>代码里每一步的均值是:</p>
+  <pre>mean = x·(1 + g²dσ/(2σ))  +  v_θ·dσ·(1 + g²(1−σ)/(2σ))</pre>
+  <p>代入 <code>g² = σ/(1−σ)·nl²</code> 化简(<b>符号化推导</b>):</p>
+  <pre>v_θ 的系数 B = dσ·(1 + nl²/2)      ← 与 σ 【无关】的常数!
+x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
+  <figure><img src="{{IMG_fg_v_vs_drift_noise}}" alt="v vs drift and noise">
+    <figcaption><b>补偿被吸收进 v 的系数</b>(放大 <code>1+nl²/2</code> 倍:nl=0.5→1.125×,1.0→1.500×)⇒
+      θ 只通过一个常数系数进入 mean,改动不会被"稀释"。(b) 噪声造成的"整批共享偏移"由组内基线自动扣掉。</figcaption></figure>
+
+  <h3>A.10 离散化:每步的 log-prob 从哪来</h3>
+  <pre>走一步:  x' = mean_θ(x) + s·ξ ,   ξ~N(0,1) ,   s = std_dev_t·√(−dσ)     ← s 与 θ 无关
+对数密度: log π_θ(x'|x) = −(x'−mean_θ)²/(2s²) − log s − ½log(2π)
+                       = −ξ²/2 − log s − ½log(2π)
+
+代码里的两个细节:
+  · prev_sample 上 .detach()  ⇒ θ 只能通过【均值】影响 log-prob
+  · 对非 batch 维取 .mean() 而不是 .sum()  ⇒ 否则 log-prob 大几千倍,ρ 会爆</pre>
+  <p><b>一个具体数</b>:<code>s=0.05, ξ=1.5</code> → <code>log π = −1.125 + 2.996 − 0.919 = +0.952</code>。
+  若 θ 把均值挪 0.005(0.1 个 s),同一点的 log-prob 变成 +1.097 ⇒ <b>ρ=1.16</b>,
+  远超 <code>clip=1e-3</code> —— 这就是那个极小裁剪范围的原因。</p>
+  <figure><img src="{{IMG_fg_logprob_and_loss}}" alt="log-prob and loss">
+    <figcaption><b>(a) log-prob 就是高斯在实际抽到那一点上的对数高度</b>,θ 只改均值;
+      <b>(b) loss 在奖励/惩罚什么</b>:A&gt;0 就推高它的概率,A&lt;0 就压低,偏离参考模型由 KL 惩罚。</figcaption></figure>
+
+  <h3>A.11 GRPO:优势、重要性比、loss</h3>
+  <pre>① 采样(no_grad)   同一 prompt 采 G 个,记下【每一步】的 log π_old
+② 打分            每个样本一个标量奖励 R_i
+③ 优势(组内标准化) A_i = (R_i − R̄_group)/(std_group + 1e−4)      ← 不需要 value 网络
+④ 广播到各步+裁剪  A_i 复制到 T 步;clamp(A_i, ±5)
+⑤ 每步重要性比     ρ_j = exp( log π_θ(x_j) − log π_old(x_j) )
+⑥ 裁剪 surrogate   L = mean( max(−Aρ, −A·clip(ρ, 1±1e−3)) ) + β·KL
+⑦ KL(闭式高斯)     ‖m_θ − m_ref‖²/(2s²),参考策略 = 关掉 LoRA(disable_adapter)</pre>
+  <table>
+    <tr><th>超参(通用配置)</th><th>值</th><th>说明</th></tr>
+    <tr><td>组大小 G</td><td>4(或 24)</td><td>GRPO 的"组"</td></tr>
+    <tr><td>训练步 T</td><td>⌊20 × 0.99⌋ = 19</td><td><code>timestep_fraction=0.99</code>,最后一步不训</td></tr>
+    <tr><td><code>clip_range</code></td><td><b>1e-3</b></td><td>极小 ⇒ 每步只许动 0.1%</td></tr>
+    <tr><td><code>adv_clip_max</code></td><td>±5</td><td>截断极端优势</td></tr>
+    <tr><td>KL 权重 β</td><td>0.004</td><td>防 reward hacking</td></tr>
+    <tr><td><code>num_inner_epochs</code></td><td>1</td><td>见下面那个"容易漏掉的点"</td></tr>
+  </table>
+  <div style="background:#fffbe6;border-left:4px solid var(--orange);padding:10px 14px;border-radius:6px">
+    <b>一个容易漏掉的点</b>:梯度累积覆盖<b>整条去噪链</b>(<code>gas = 1×T</code>),且 <code>inner_epochs=1</code>
+    ⇒ <b>同一个子批次内部 θ 不动</b> ⇒ 该批次里 <code>ρ ≡ 1</code>、裁剪不起作用
+    ⇒ 更新退化成<b>普通策略梯度 + 组内基线</b>。只有同一批数据被用 ≥2 次时,ρ≠1、裁剪才真正生效。
+  </div>
+  <figure><img src="{{IMG_fg_grpo_computation}}" alt="GRPO computation">
+    <figcaption><b>一次更新的完整计算链</b> + G=4 的数值例(奖励 [1,0,1,1] → A=[+0.577,−1.732,+0.577,+0.577])+ 裁剪行为 + 超参。</figcaption></figure>
+  <figure><img src="{{IMG_fg_grpo_what_changes}}" alt="what GRPO changes">
+    <figcaption><b>GRPO 改的是什么。</b>采样器换了(目的地暂不变)→ 参数改了(目的地<b>故意</b>变):
+      训练让分布偏向高奖励那一侧。而 SDE 之所以不可少,不是"为了探索",而是<b>没有似然就没有策略梯度</b>。</figcaption></figure>
+
+  <h3>A.12 噪声与"运气":谁在处理什么</h3>
+  <div style="background:#fff;border-left:4px solid var(--red);padding:10px 14px;border-radius:6px">
+    <b>两个"抵消"别混</b><br>
+    <b>层次 A(采样器/密度)</b>:噪声的扩散 <code>+(g²/2)p''</code> ⇄ 漂移的补偿 <code>−(g²/2)p''</code> ⇒ <b>精确抵消</b>,分布不变。<br>
+    <b>层次 B(奖励/优势)</b>:运气 <code>η</code> <b>不抵消</b>,只被<b>分解</b> —— 批平均被减掉,个体偏离原样留下(那是估计方差)。
+  </div>
+  <figure><img src="{{IMG_fg_two_cancellations}}" alt="two cancellations">
+    <figcaption>(a) 两层对照;(b) 同一个噪声 ξ 的三个作用面(采样器 / 梯度 / 奖励);(c) G 变大时个体运气几乎不变(≈σ),
+      但平均后估计误差按 <code>1/√G</code> 下降 —— <b>靠平均,不靠抵消</b>。</figcaption></figure>
+  <figure><img src="{{IMG_fg_baseline_removes}}" alt="what baseline removes">
+    <figcaption><b>组内基线扣掉了什么。</b>(a) 奖励 = 难度 + 真本事 + 运气,减掉组内平均 ⇒ 扣掉难度与共享偏移;
+      (b) 但<b>个体运气扣不掉</b>:同样的真本事、两次采样优势不同。</figcaption></figure>
+  <figure><img src="{{IMG_fg_shift_invariance}}" alt="shift invariance">
+    <figcaption><b>更准确的说法:基线的本质是平移不变性。</b>整组奖励 +10,优势一模一样;
+      <code>mean(η)</code> 不是"共同的随机源",而是这批独立运气的<b>样本平均</b>(期望 0、std σ/√G,实测 0.249 vs 理论 0.250)。</figcaption></figure>
+  <figure><img src="{{IMG_fg_v_vs_score}}" alt="reinforce direction">
+    <figcaption><b>期望 vs 方差(Stein 恒等式,200 万样本验证)</b>:<code>E[A·ξ] = s·∂E[R]/∂m</code> ——
+      噪声推挤的<b>期望是奖励对均值的梯度</b>,不是随机抖动;剩下的方差才是运气。</figcaption></figure>
+  <figure><img src="{{IMG_fg_no_wiggle}}" alt="not wiggly">
+    <figcaption><b>会让以后轨迹都变歪吗?—— 不会。</b>(a) 抖的是单次实现,场一直是平滑的,而<b>抖动幅度 s 只依赖 σ 与 noise_level,不含 θ</b>;
+      (b) 关键恒等式;(c) 什么会变、什么不会变。<b>噪声负责探路,奖励负责筛选,平均负责去随机。</b></figcaption></figure>
+  <figure><img src="{{IMG_fg_rl_pushes_mean}}" alt="RL pushes the mean">
+    <figcaption><b>RL 到底在学什么。</b>噪声把粒子推到某个落点(方向 ξ);若轨迹得分高,就沿 ξ 把这一步的条件分布<b>均值</b>挪过去一点。
+      1 维 toy 真跑:均值从 0 收敛到奖励峰值 1(G=4 波动 ~0.10,G=16 ~0.07)。</figcaption></figure>
+
+  <h3>A.13 能学到什么、学不到什么</h3>
+  <table>
+    <tr><th>学到 ✅</th><th>论文数字</th></tr>
+    <tr><td>组合 / 计数 / 空间关系("两个红球在左边")</td><td>GenEval <b>63% → 95%</b></td></tr>
+    <tr><td>精确文字渲染</td><td><b>59% → 92%</b></td></tr>
+    <tr><td>人类偏好("更好看")</td><td>PickScore 明显提升</td></tr>
+  </table>
+  <p><b>共同点:目标本身是"打分"而不是"距离"。</b></p>
+  <pre>flow matching / SFT 的损失 = 拟合数据分布  → 学会"产出合法的输出"(正确输出长什么样)
+奖励信号            = 在分布里挑我想要的 → 学会"产出我更想要的输出"(哪个输出更好)</pre>
+  <table>
+    <tr><th>学不到 / 边界 ❌</th><th>说明</th></tr>
+    <tr><td>奖励没覆盖的东西</td><td>reward hacking(KL 压制但没根除)</td></tr>
+    <tr><td>新能力</td><td>只在已有能力范围内<b>偏向</b></td></tr>
+    <tr><td>只动均值</td><td>每步方差固定,策略表达力受限</td></tr>
+    <tr><td>训练步数 ≠ 推理步数</td><td>被优化的策略 ≠ 部署的采样器(论文用实验支持,不是定理)</td></tr>
+  </table>
+  <figure><img src="{{IMG_fg_rl_vs_flow}}" alt="does RL break flow matching">
+    <figcaption><b>RL 会不会破坏 flow matching?</b>(a) <b>纠正前提</b>:标准 flow matching 的 ODE 轨迹<b>本来就不直</b>
+      (直线是插值,不是 ODE 轨迹;单点数据才直;要直得靠 reflow);(b) RL 改的是场,所以轨迹形状会变,
+      但"从噪声 ODE 积到数据"这件事没变;(c) 什么变、什么没变。</figcaption></figure>
+
+  <h3>A.14 诚实边界清单</h3>
+  <table>
+    <tr><th>#</th><th>边界</th></tr>
+    <tr><td>1</td><td>等价 SDE 是<b>连续时间</b>结论;离散化有偏差(实测 ~1%),所以 Denoising Reduction 是<b>近似</b>,不是定理。</td></tr>
+    <tr><td>2</td><td><code>g</code> 理论上任选,<b>数值上必须 σ→0 时衰减</b>(常数 g 会数值发散)。</td></tr>
+    <tr><td>3</td><td>KL 是闭式高斯且对空间维<b>取平均</b>(不是真 KL 的求和),是经过缩放的版本。</td></tr>
+    <tr><td>4</td><td>两原子 toy 对补偿系数<b>不敏感</b>(强吸引子钉住终点),要连续分布才看得出 c 必须等于 1。</td></tr>
+    <tr><td>5</td><td><code>advantage</code> 沿时间步广播 ⇒ <b>没有 per-step 信用分配</b>(代码注释也这么说)。</td></tr>
+    <tr><td>6</td><td>论文只在 <b>T2I</b> 验证,视频/机器人明确列为 future work。</td></tr>
+    <tr><td>7</td><td>RL 不破坏"模型族/接口/ODE 采样能力",但<b>可能</b>影响"少步采样质量" —— <b>论文未测</b>,是空白。</td></tr>
+    <tr><td>8</td><td>baseline 用含自身的组均值 ⇒ <code>O(1/G)</code> 小偏差(严格无偏是留一均值 <code>R̄_{−i}</code>)。</td></tr>
+    <tr><td>9</td><td>本附录所有数值来自 1 维/解析可算的 toy(可复现,脚本在 <code>tools/vae_dit_story/</code>),<b>不是真实图像模型的实测</b>。</td></tr>
+  </table>
+
+  <h3>A.15 一页速查</h3>
+  <pre>【链条】
+  插值 x_σ=(1−σ)x₀+σε  →  v*=E[ε−x₀|x_σ]=(x−E[x₀|x])/σ
+  →  Tweedie 与 score 两个恒等式        →  ODE 采样器合格(局部⟹全局)
+  →  一族等价 SDE: f = v* ∓ (g²/2)∇log p   (g 自由,漂移被唯一决定)
+  →  通量守恒: 总通量 = v*p,与 ODE 完全相同 ⇒ 分布不变
+  →  每步是简单高斯 ⇒ 每步 log-prob 可算
+  →  GRPO: 组内标准化出优势(无 value)→ 逐步 ρ → 裁剪 surrogate + 闭式 KL
+  →  梯度落回 θ: ∇L = −A·Σ_j (ξ_j/s_j)·∂m_j/∂θ
+
+【三个"不"】
+  · 噪声不需要被抵消 —— 它是探索方向;E[A·ξ]=s·∂E[R]/∂m(期望是梯度)
+  · 抖动幅度与 θ 无关(s 只依赖 σ、noise_level)⇒ RL 只挪中心,不让轨迹变歪
+  · 补偿不改变"目的地分布"—— 它只在【群体/密度】层面精确相消
+
+【两个"抵消"别混】
+  层次 A(采样器/密度): 扩散 +(g²/2)p''  ⇄  补偿 −(g²/2)p''   ⇒ 精确抵消
+  层次 B(奖励/优势):   运气 η                                    ⇒ 不抵消,只被分解(批平均去掉,个体留下)
+
+【一句话】
+  把 flow 的确定性 ODE 换成边缘分布相同的随机 SDE ⇒ 每步有可算似然
+  ⇒ 才能用组内相对奖励做策略梯度 ⇒ 把"难写成损失但容易打分"的目标学进来。</pre>
+  </div></section>
 
 <section id="gloss"><div class="wrap">
   <h2>术语、五个易错点与准确性边界</h2>
