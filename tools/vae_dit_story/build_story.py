@@ -74,6 +74,9 @@ SLOTS = {
     "IMG_fg_v_vs_score":   IMG / "fg_v_vs_score.png",
     "IMG_fg_vstar_step":   IMG / "fg_vstar_step.png",
     "IMG_fg_vstar_table":   IMG / "fg_vstar_table.png",
+    "IMG_fg_reward_terminal": IMG / "fg_reward_terminal.png",
+    "IMG_fg_reward_path_vs_field": IMG / "fg_reward_path_vs_field.png",
+    "IMG_fg_more_steps": IMG / "fg_more_steps.png",
 }
 
 MAXW = 1250

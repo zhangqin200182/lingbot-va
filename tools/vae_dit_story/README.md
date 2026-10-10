@@ -9,7 +9,7 @@
 | **第三幕** | 条件 = 一块"透镜" | 只换先验;同一 `x_σ` 不同 `c` → 输出 **−0.20 / −1.40 / +1.80**;训练注意力掩码(384×384) |
 | **第四幕** | 视频链 vs 动作链 | **两条链的时序图**(共同 KV cache 的写入/读取时刻 + 掩码实测的跨模态可见性):过程解耦(独立 noise / σ 网格 / shift / 步数 / CFG / 损失),信息**单向**耦合(动作能看本 chunk 视频,视频看不到本 chunk 动作);**4.4 统一视角**:两条链 = 同一个联合分布按「视频先行」切出的两个条件切片,各自一个引力场 |
 | **第五幕** | 横向对照:6 个世界-动作模型 | **「耦合方向 × 想象与执行的关系」谱系图**(lingbot-va / FastWAM / DreamZero / Cosmos 3 / Motus2 / GlanceWAM) + **五条判据及其实证数字**(隔离 mask 71.5→**47.0**、horizon 3 s 峰值 71.6、延迟 48 ms vs 1133–3812 ms) + **哪些属于推断、哪些有实证**的诚实边界表 |
-| **附录 A** | Flow-GRPO 从 v 到可优化的随机策略 | 15 小节 / 27 张图:ODE 与 SDE 定义 → Step 1–7 推导 → 补偿的账 → 密度相消 → 通量守恒 → 每步 log-prob → GRPO 的 loss 与优势 → 运气与基线(Stein 恒等式)→ "不会让轨迹变歪" + 诚实边界清单 |
+| **附录 A** | Flow-GRPO 从 v 到可优化的随机策略 | 18 小节 / 30 张图:ODE 与 SDE 定义 → Step 1–7 推导 → 补偿的账 → 密度相消 → 通量守恒 → 每步 log-prob → GRPO 的 loss 与优势 → 运气与基线(Stein 恒等式)→ "不会让轨迹变歪" → 为什么奖励落在每步 → 奖励路径还是奖励速度(两条路线)→ 步骤会不会变多(toy 实测 4–16×)+ 诚实边界清单 |
 
 ## 内嵌的 VAE 探针
 
@@ -67,6 +67,9 @@ MPLCONFIGDIR=/tmp/mplcache python flow_grpo_two_cancel_fig.py   # 两个"抵消"
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_rl_vs_flow_fig.py   # RL 会不会破坏 flow matching
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_push_mean_fig.py    # RL 在推均值(1 维 toy 真跑)
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_no_wiggle_fig.py    # 不会变歪(Stein 恒等式)
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_reward_terminal_fig.py  # 奖励为什么落在每步
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_two_routes_fig.py       # 奖励路径 vs 奖励速度(两条路线)
+MPLCONFIGDIR=/tmp/mplcache python flow_grpo_more_steps_fig.py       # 步骤会不会变多(toy 实测)
 MPLCONFIGDIR=/tmp/mplcache python story_block_flow.py           # (备用)block 内部流程:训练 vs 推理
 MPLCONFIGDIR=/tmp/mplcache python story_blockmask.py            # (备用)BlockMask 矩阵 + 推理注意力
 MPLCONFIGDIR=/tmp/mplcache python story_clean_segments.py       # (备用)clean 段的 4×4 可见性矩阵

@@ -767,7 +767,91 @@ x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
     <figcaption><b>RL 到底在学什么。</b>噪声把粒子推到某个落点(方向 ξ);若轨迹得分高,就沿 ξ 把这一步的条件分布<b>均值</b>挪过去一点。
       1 维 toy 真跑:均值从 0 收敛到奖励峰值 1(G=4 波动 ~0.10,G=16 ~0.07)。</figcaption></figure>
 
-  <h3>A.13 能学到什么、学不到什么</h3>
+  <h3>A.13 为什么奖励会"落在每一步"上</h3>
+  <p><b>先纠正一个前提:奖励只有终点一个。</b>代码里 <code>R_i</code> 只在<b>最终样本</b>上计算(检测器 / OCR / 偏好模型),
+    <b>没有任何 per-step 奖励</b>。每步之所以出现,是因为优势被 <code>.repeat(1, T)</code> <b>广播</b> —— 每步是<b>分摊</b>同一个 <code>A</code>。</p>
+  <pre>轨迹的概率 = 各步条件概率的【乘积】  π_θ(traj) = Π_j π_θ(x_{j+1} | x_j)
+取对数     → 变成【求和】            log π_θ = Σ_j log π_θ(x_{j+1} | x_j)
+求导                                ∇log π_θ(traj) = Σ_j ∇log π_θ(x_{j+1} | x_j)
+
+⇒ ∇L = − A · Σ_j ∇log π_j = − A · ∇log π_θ(整条轨迹)</pre>
+  <p>所以<b>不是"我们选择奖励每步",而是"轨迹概率的对数天然是各步之和"</b> —— 求和来自概率的乘积结构。
+    另一个角度:<b>θ 只能通过每一步的均值起作用</b>(<code>v_θ(x_j,σ_j)</code>),
+    所以"改变终点分布"只能通过改变各步的条件分布来实现,没有"直接改终点概率"这个操作。</p>
+  <p>"只看终点的比值"和"每步比值"在数学上<b>是同一件事</b>:<code>ρ_traj = Π_j ρ_j = exp(Σ_j Δlog π_j)</code>。
+    但代码用<b>每步的 ρ</b>,原因是<b>信赖域的粒度</b>:</p>
+  <table>
+    <tr><th>做法(<code>ε=1e-3, T=19</code>)</th><th>效果</th></tr>
+    <tr><td><b>逐步裁剪</b>(每步 <code>ρ_j ∈ [1±1e-3]</code>)</td><td>整条轨迹上界 <code>1.001¹⁹ = 1.0192</code> ⇒ 轨迹级自由度 <b>1.9%</b> ✅</td></tr>
+    <tr><td>只裁剪<b>轨迹级</b>比值到 <code>1±1e-3</code></td><td>每步只许动 <code>1.001^(1/19) = 1.0000526</code> ⇒ <b>0.0053%</b>(比前者紧 94.7%,几乎学不动)</td></tr>
+  </table>
+  <p>而真正"给每步单独定分"(per-step credit assignment)需要<b>中间奖励或 value 网络</b> ——
+    <b>生成任务里两者都没有</b>(半噪声的图没法打分);这正是 GRPO 想省掉的东西,代价就是没有逐步信用分配。</p>
+  <figure><img src="{{IMG_fg_reward_terminal}}" alt="why the reward lands on steps">
+    <figcaption>(a) 轨迹概率 = 各步相乘 ⇒ 取对数变求和 ⇒ 求导落在每步;
+      (b) 逐步裁剪与轨迹级裁剪的自由度对比;(c) 真正"逐步定分"需要什么。</figcaption></figure>
+
+  <h3>A.14 奖励"路径"还是奖励"通向目的的速度"?</h3>
+  <p>这个问题正好踩在方法论的分岔口上。论文自己列了 T2I 对齐的<b>五条主线</b>:</p>
+  <pre>(1) direct fine-tuning with scalar rewards [30–33]    ← "直接奖励速度"属于这里
+(2) Reward Weighted Regression (RWR)
+(3) DPO 及其变体
+(4) PPO-style policy gradients                        ← Flow-GRPO 在这里
+(5) training-free alignment</pre>
+  <p><b>路线 A(可微奖励反传,DRaFT / ReFL / AlignProp)</b>:如果奖励可微,可以完全不做路径抽样,把终点奖励直接对场求导:</p>
+  <pre>输出:x(T) = F_θ(ε)          ← 整条采样链留在计算图里
+梯度:∂R/∂θ = (∂R/∂x(T)) · (∂x(T)/∂θ)</pre>
+  <p>三个直接推论:<b>不需要似然</b>(所以不必把 ODE 变成 SDE)、<b>梯度无噪声</b>(精确)、但<b>奖励必须可微 + 显存昂贵</b>。</p>
+  <table>
+    <tr><th></th><th>A. 反传奖励(DRaFT/ReFL/AlignProp)</th><th>B. GRPO(本方法)</th></tr>
+    <tr><td>奖励要求</td><td><b>必须可微</b></td><td><b>只要标量</b>(黑盒打分器都行)</td></tr>
+    <tr><td>需要似然</td><td><b>不需要</b></td><td><b>必须要</b>(所以必须 ODE→SDE)</td></tr>
+    <tr><td>显存</td><td>整条链(<b>贵</b>)</td><td>只看 log-prob(<b>便宜</b>)</td></tr>
+    <tr><td>梯度</td><td><b>无噪声</b>(精确)</td><td>有噪声(<b>无偏</b>,靠平均)</td></tr>
+    <tr><td>主要风险</td><td>奖励被<b>钻空子</b>(对抗性、过拟合奖励)</td><td><b>方差大</b>、无逐步信用分配</td></tr>
+    <tr><td>典型奖励</td><td>CLIP 分数、检测框回归、可微渲染/物理</td><td><b>OCR / 规则校验 / 偏好模型</b></td></tr>
+  </table>
+  <div style="background:#fff;border-left:4px solid var(--orange);padding:10px 14px;border-radius:6px">
+    <b>为什么"不可微奖励"时只能走路径</b>:一个标量"好/坏"<b>不提供方向</b> —— 你不知道该往哪改场。要拿到方向只有两条路:
+    奖励本身可微(路线 A),或用"这次随机方向 <code>ξ</code> 是否与好结果相关"<b>统计地</b>估出方向
+    (<code>E[A·ξ] = s·∂E[R]/∂m</code>,路线 B)。<b>后者需要知道"这次走的是哪个方向",也就是每步的似然</b>
+    —— 这就是前面那整套推导存在的理由。
+  </div>
+  <p><b>三个折中</b>:① 可微奖励当辅助项 <code>L = L_GRPO + λ(−R_diff)</code>,只对最后几步保留计算图;
+    ② 先 reflow/蒸馏<b>修直路径</b>(步数变少 ⇒ 反传代价低,路径也更接近直线);
+    ③ 引入 <b>per-step 优势</b>(代码里那个广播就是为它留的口子)。</p>
+  <figure><img src="{{IMG_fg_reward_path_vs_field}}" alt="reward the path or the field">
+    <figcaption>(a) 两条路线的结构对比;(b) 取舍表;(c) 三个折中与真正会咬人的两个地方。</figcaption></figure>
+
+  <h3>A.15 步骤会不会变多?(这是真实风险,而且论文没测)</h3>
+  <p>分布被 RL 倾斜之后,场的形状会变 ⇒ <b>同样的精度可能需要更多采样步</b>。在 1 维两原子 toy 上实测
+    (20000 条样本,比较端点标准差与解析值的误差):</p>
+  <table>
+    <tr><th>精度要求</th><th>训练前(0.5/0.5)</th><th>RL 之后(0.8/0.2)</th><th>倍数</th></tr>
+    <tr><td>1% 误差</td><td><b>8 步</b></td><td><b>32 步</b></td><td><b>4×</b></td></tr>
+    <tr><td>0.4% 误差</td><td><b>8 步</b></td><td><b>128 步</b></td><td><b>16×</b></td></tr>
+  </table>
+  <p><b>机制</b>:倾斜 ⇒ 场的"切换区"(两个候选的后验权重快速倒向一边的地方)<b>变陡</b> ⇒ 粗步长一步跨过就积分错。</p>
+  <div style="background:#eef7f1;border-left:4px solid var(--green);padding:10px 14px;border-radius:6px">
+    <b>★ 最强的保护:奖励是在【训练步数】上测出来的。</b><br>
+    若 RL 让场需要更多步才采得好,训练时的采样本身就变差 ⇒ 奖励掉 ⇒ 更新被惩罚回来。
+    <b>所以工程做法是:把训练步数设成你要部署的步数。</b>
+    论文的配置是<b>训练 20 / 评估 50</b>(它关心 40 步出好图,不关心少步部署);若要 4 步部署,就该让
+    <code>sample.num_steps = 4</code>,让 reward 在你关心的那个步数上被测量。
+  </div>
+  <p>另外两条保护:<b>KL(β=0.004)+ LoRA</b> 把 θ 拉在原模型附近、只做低秩小扰动(上面 toy 用的是"倾斜到极限",没有这个约束);
+    以及<b>奖励通常与画质弱相关</b>(偏好模型对模糊、伪影敏感)。</p>
+  <p><b>怎么验证</b>(可执行):① 画「质量 vs 采样步数」曲线,训练前后对比;② 测轨迹弯曲度(弧长/弦长、相邻步方向夹角);
+    ③ 注意<b>论文只报了固定 40 步下质量没明显掉,没报少步对比 ⇒ 这是空白,不能当成"已验证没问题"</b>。</p>
+  <p><b>三个补救</b>:① 训练时就少步采样;② 加强 KL(β↑)或早停;③ RL 之后做一次 reflow/蒸馏<b>修直路径</b>
+    (标准做法:先对齐奖励,再蒸馏到少步)。</p>
+  <p><b>一个反例(说明不是必然变差)</b>:前面 toy 里 RL 之后弯曲度是 <b>1.99 → 1.59(更直了)</b> ——
+    因为奖励把分布推向更集中的区域,而<b>单点场的路径恰好是直线</b>。方向取决于奖励偏好什么,但"会不会需要更多步"<b>必须测过才算</b>。</p>
+  <figure><img src="{{IMG_fg_more_steps}}" alt="does RL need more steps">
+    <figcaption>(a) toy 实测的误差-步数曲线;(b) 机制:倾斜让切换区变陡;
+      (c) 工程结论:训练步数 = 部署步数、如何监控、三个补救。<b>(1 维 toy,非真实模型实测)</b></figcaption></figure>
+
+  <h3>A.16 能学到什么、学不到什么</h3>
   <table>
     <tr><th>学到 ✅</th><th>论文数字</th></tr>
     <tr><td>组合 / 计数 / 空间关系("两个红球在左边")</td><td>GenEval <b>63% → 95%</b></td></tr>
@@ -789,7 +873,7 @@ x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
       (直线是插值,不是 ODE 轨迹;单点数据才直;要直得靠 reflow);(b) RL 改的是场,所以轨迹形状会变,
       但"从噪声 ODE 积到数据"这件事没变;(c) 什么变、什么没变。</figcaption></figure>
 
-  <h3>A.14 诚实边界清单</h3>
+  <h3>A.17 诚实边界清单</h3>
   <table>
     <tr><th>#</th><th>边界</th></tr>
     <tr><td>1</td><td>等价 SDE 是<b>连续时间</b>结论;离散化有偏差(实测 ~1%),所以 Denoising Reduction 是<b>近似</b>,不是定理。</td></tr>
@@ -798,12 +882,12 @@ x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
     <tr><td>4</td><td>两原子 toy 对补偿系数<b>不敏感</b>(强吸引子钉住终点),要连续分布才看得出 c 必须等于 1。</td></tr>
     <tr><td>5</td><td><code>advantage</code> 沿时间步广播 ⇒ <b>没有 per-step 信用分配</b>(代码注释也这么说)。</td></tr>
     <tr><td>6</td><td>论文只在 <b>T2I</b> 验证,视频/机器人明确列为 future work。</td></tr>
-    <tr><td>7</td><td>RL 不破坏"模型族/接口/ODE 采样能力",但<b>可能</b>影响"少步采样质量" —— <b>论文未测</b>,是空白。</td></tr>
+    <tr><td>7</td><td>RL 不破坏"模型族/接口/ODE 采样能力",但<b>会影响</b>"少步采样质量"(见 A.15 的 toy 实测:1% 误差需 8→32 步)—— <b>论文未测</b>,是空白。</td></tr>
     <tr><td>8</td><td>baseline 用含自身的组均值 ⇒ <code>O(1/G)</code> 小偏差(严格无偏是留一均值 <code>R̄_{−i}</code>)。</td></tr>
     <tr><td>9</td><td>本附录所有数值来自 1 维/解析可算的 toy(可复现,脚本在 <code>tools/vae_dit_story/</code>),<b>不是真实图像模型的实测</b>。</td></tr>
   </table>
 
-  <h3>A.15 一页速查</h3>
+  <h3>A.18 一页速查</h3>
   <pre>【链条】
   插值 x_σ=(1−σ)x₀+σε  →  v*=E[ε−x₀|x_σ]=(x−E[x₀|x])/σ
   →  Tweedie 与 score 两个恒等式        →  ODE 采样器合格(局部⟹全局)
