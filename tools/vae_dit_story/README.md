@@ -9,7 +9,8 @@
 | **第三幕** | 条件 = 一块"透镜" | 只换先验;同一 `x_σ` 不同 `c` → 输出 **−0.20 / −1.40 / +1.80**;训练注意力掩码(384×384) |
 | **第四幕** | 视频链 vs 动作链 | **两条链的时序图**(共同 KV cache 的写入/读取时刻 + 掩码实测的跨模态可见性):过程解耦(独立 noise / σ 网格 / shift / 步数 / CFG / 损失),信息**单向**耦合(动作能看本 chunk 视频,视频看不到本 chunk 动作);**4.4 统一视角**:两条链 = 同一个联合分布按「视频先行」切出的两个条件切片,各自一个引力场 |
 | **第五幕** | 横向对照:6 个世界-动作模型 | **「耦合方向 × 想象与执行的关系」谱系图**(lingbot-va / FastWAM / DreamZero / Cosmos 3 / Motus2 / GlanceWAM) + **五条判据及其实证数字**(隔离 mask 71.5→**47.0**、horizon 3 s 峰值 71.6、延迟 48 ms vs 1133–3812 ms) + **哪些属于推断、哪些有实证**的诚实边界表 |
-| **附录 A** | Flow-GRPO 从 v 到可优化的随机策略 | 18 小节 / 30 张图:ODE 与 SDE 定义 → Step 1–7 推导 → 补偿的账 → 密度相消 → 通量守恒 → 每步 log-prob → GRPO 的 loss 与优势 → 运气与基线(Stein 恒等式)→ "不会让轨迹变歪" → 为什么奖励落在每步 → 奖励路径还是奖励速度(两条路线)→ 步骤会不会变多(toy 实测 4–16×)+ 诚实边界清单 |
+| **附录 A** | Flow-GRPO 从 v 到可优化的随机策略 | 22 小节 / 37 张图:ODE 与 SDE 定义 → Step 1–7 推导 → 补偿的账 → 密度相消 → 通量守恒 → 每步 log-prob → GRPO 的 loss 与优势 → 运气与基线(Stein 恒等式)→ "不会让轨迹变歪" → 为什么奖励落在每步 → 奖励路径还是奖励速度(两条路线)→ 步骤会不会变多(toy 实测 4–16×)+ 诚实边界清单 |
+| **附录 B** | DiffusionNFT:在前向过程上做监督式 RL | 10 小节 / 14 张图:五条路线定位 → 与 Flow-GRPO 的对照 → 七步算法 → 为什么"重新加噪" → 组间优势怎么用 → 损失逐符号 → 两项为何一正一反 → 为什么算 RL → off-policy 能力与 η 的确切含义 → 记分卡与诚实边界 |
 
 ## 内嵌的 VAE 探针
 
@@ -67,6 +68,30 @@ MPLCONFIGDIR=/tmp/mplcache python flow_grpo_two_cancel_fig.py   # 两个"抵消"
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_rl_vs_flow_fig.py   # RL 会不会破坏 flow matching
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_push_mean_fig.py    # RL 在推均值(1 维 toy 真跑)
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_no_wiggle_fig.py    # 不会变歪(Stein 恒等式)
+# ---- 附录 A 补充:机制深化(7 张)----
+MPLCONFIGDIR=/tmp/mplcache python nft_why_noise_fig.py          # 为什么必须注入噪声(似然 vs 多样性)
+MPLCONFIGDIR=/tmp/mplcache python nft_noise_to_prob_fig.py      # 加噪声为什么能产生概率(密度是搬过来的)
+MPLCONFIGDIR=/tmp/mplcache python nft_theta_entry_fig.py        # θ 进入每步高斯的唯一入口
+MPLCONFIGDIR=/tmp/mplcache python nft_theta_vs_noise_fig.py     # 两个需求两个来源 / 路线分岔
+MPLCONFIGDIR=/tmp/mplcache python nft_drift_meaning_fig.py      # 漂移的含义(平移 + 加宽)
+MPLCONFIGDIR=/tmp/mplcache python nft_drift_roles_fig.py        # 两项的角色与配比(1% → 92%)
+MPLCONFIGDIR=/tmp/mplcache python nft_x_term_fig.py             # "x 项"是补偿项展开的另一半
+
+# ---- 附录 B:DiffusionNFT(14 张)----
+MPLCONFIGDIR=/tmp/mplcache python nft_vs_flowgrpo_fig.py        # 两条流水线 + 取舍表
+MPLCONFIGDIR=/tmp/mplcache python nft_where_fig.py              # 改哪里(三栏)
+MPLCONFIGDIR=/tmp/mplcache python nft_training_half_fig.py      # 训练那一半(七步)
+MPLCONFIGDIR=/tmp/mplcache python nft_forward_noise_fig.py      # ④ 前向加噪
+MPLCONFIGDIR=/tmp/mplcache python nft_renoise_fig.py            # 为什么重新加噪
+MPLCONFIGDIR=/tmp/mplcache python nft_advantage_fig.py          # 组间优势:多样性/怎么算/怎么用
+MPLCONFIGDIR=/tmp/mplcache python nft_formula_fig.py            # 损失公式逐符号
+MPLCONFIGDIR=/tmp/mplcache python nft_two_terms_fig.py          # 两项形式一样凭什么一正一反
+MPLCONFIGDIR=/tmp/mplcache python nft_implicit_fig.py           # 两个分身 = 两个对称目标
+MPLCONFIGDIR=/tmp/mplcache python nft_T_fig.py                  # T± 是什么
+MPLCONFIGDIR=/tmp/mplcache python nft_is_rl_fig.py              # 为什么算 RL
+MPLCONFIGDIR=/tmp/mplcache python nft_offpolicy_fig.py          # off-policy 能力
+MPLCONFIGDIR=/tmp/mplcache python nft_eta_fig.py                # η = 滞后旋钮
+MPLCONFIGDIR=/tmp/mplcache python nft_better_fig.py             # 记分卡(与 GRPO 的取舍)
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_reward_terminal_fig.py  # 奖励为什么落在每步
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_two_routes_fig.py       # 奖励路径 vs 奖励速度(两条路线)
 MPLCONFIGDIR=/tmp/mplcache python flow_grpo_more_steps_fig.py       # 步骤会不会变多(toy 实测)

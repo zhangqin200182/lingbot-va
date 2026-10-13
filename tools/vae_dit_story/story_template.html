@@ -88,6 +88,7 @@
   <a href="#act4">第四幕 · 视频链与动作链</a>
   <a href="#act5">第五幕 · 六个工作对照</a>
   <a href="#appendixA">附录 A · Flow-GRPO</a>
+  <a href="#appendixB">附录 B · DiffusionNFT</a>
   <a href="#gloss">术语与边界</a>
 </div></nav>
 
@@ -851,7 +852,89 @@ x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
     <figcaption>(a) toy 实测的误差-步数曲线;(b) 机制:倾斜让切换区变陡;
       (c) 工程结论:训练步数 = 部署步数、如何监控、三个补救。<b>(1 维 toy,非真实模型实测)</b></figcaption></figure>
 
-  <h3>A.16 能学到什么、学不到什么</h3>
+  <h3>A.16 为什么必须注入噪声,以及"概率"到底从哪来</h3>
+  <p><b>一个常见的困惑</b>:初始噪声 <code>ε</code> 已经提供了多样性(不同 <code>ε</code> → 不同图),那为什么还要每一步再注入 <code>g·dW</code>?</p>
+  <p><b>答案:注入噪声买的不是"多样性",而是"可用的似然"。</b>这是两件不同的事。</p>
+  <table>
+    <tr><th></th><th>ODE</th><th>SDE</th></tr>
+    <tr><td>不同 <code>ε</code> → 不同输出</td><td>✓</td><td>✓</td></tr>
+    <tr><td>给定 <code>ε</code> 后输出是否确定</td><td><b>确定</b></td><td>随机</td></tr>
+    <tr><td>"这一张图"的概率</td><td>δ / 整条雅可比</td><td><b>每步高斯</b></td></tr>
+    <tr><td>每步对数密度 / 比值 <code>ρ</code></td><td><b>没有 / 构造不出</b></td><td><b>有 / 可构造</b></td></tr>
+    <tr><td>策略梯度</td><td><b>无法估计</b></td><td>可以</td></tr>
+  </table>
+  <p>ODE 下 <code>ε → x(T)</code> 是<b>确定性映射</b>:把 <code>ε</code> 当动作则策略与 θ 无关(梯度为 0);要算输出密度就得算<b>整条 T 步映射的雅可比行列式</b>(昂贵、不稳,而且只有"整条一个数",没有逐步结构)。
+    SDE 下每一步变成 <code>π_θ(x'|x) = N(mean_θ(x), s²)</code> ⇒ <code>log π_θ = Σ_j log N(·)</code> 便宜且精确 ⇒ 才有了 <code>ρ</code>。</p>
+  <figure><img src="{{IMG_fg_why_inject_noise}}" alt="why inject noise">
+    <figcaption>ODE 有多样性但没有可用似然;SDE 两者都有。<b>一个反过来的证据</b>:如果加噪声只是为了多样性,就没必要费大力气把分布保回来(补偿项);
+      正因为"必须"加噪声(为了似然),才不得不花力气让分布不变。</figcaption></figure>
+  <p>再往下一层:<b>"加噪声"为什么能产生概率密度?</b> 因为密度不是凭空出现的,而是从噪声的密度<b>搬</b>过来的 —— 给定落点可以反推出"是哪个噪声造成了它":</p>
+  <pre>确定性:x' = m_θ(x)                    → 输出是一个【点】,密度是 δ
+加噪声:  x' = m_θ(x) + s·ξ ,  ξ~N(0,1)
+  反推:  ξ = (x' − m_θ(x))/s
+  ⇒  π_θ(x'|x) = p_ξ( (x'−m_θ)/s ) / s = N(x'; m_θ, s²)</pre>
+  <p><b>翻译:</b>"落在 <code>x'</code> 的概率密度" = "噪声取到那个特定值的概率密度"。靠近中心只需很小的噪声(落点多,密度高),远离中心需要很大的噪声(落点少,密度低)
+    —— 钟形不是假设的,是噪声密度形状的直接搬运。归一化靠变量替换的雅可比 <code>1/s</code> 抵消。</p>
+  <figure><img src="{{IMG_fg_noise_creates_prob}}" alt="noise creates probability">
+    <figcaption>左侧是已知的噪声密度,右侧就是 <code>π_θ(x'|x)</code>;表格列出 δ 的六项不可用与高斯的六项可用。
+      数值核对:20 万个样本的直方图与解析式最大偏差 0.0066,<code>∫N = 1.000000</code>。</figcaption></figure>
+
+  <h3>A.17 参数 θ 是怎么进入"每步高斯"的</h3>
+  <p>关键分解:<b>一步的输出 = 「确定的均值(含 θ)」+「随机的噪声(与 θ 无关)」</b>。</p>
+  <pre>x' = mean_θ(x,σ) + s·ξ ,   s = std_dev_t·√|dσ|     ← s 只依赖 σ 与 noise_level</pre>
+  <p>而均值里的 θ 只有一个入口 —— <code>v_θ</code>。把补偿项代进去就能看清(<code>∇log p</code> 也是用 <code>v_θ</code> 算的,不需要第二个网络):</p>
+  <pre>f = v_θ − (g²/2)∇log p_σ ,   ∇log p_σ = −(x + (1−σ)v_θ)/σ
+⇒ f = (g²/(2σ))·x + [1 + g²(1−σ)/(2σ)]·v_θ
+⇒ mean = A(σ)·x + B·v_θ
+     A(σ) = 1 + dσ·nl²/(2(1−σ))      只依赖 σ
+     B    = dσ·(1 + nl²/2)           与 σ 【无关】!</pre>
+  <figure><img src="{{IMG_fg_theta_enters_step}}" alt="where theta enters">
+    <figcaption>(a) θ 只挪高斯中心,挪不了宽度;(b) 补偿项被吸收成 <code>v_θ</code> 的系数;(c) 谁依赖 θ 的清单。
+      "补偿项"不是独立于 θ 的东西 —— 它本身就是 <code>v_θ</code> 的系数的一部分。</figcaption></figure>
+  <figure><img src="{{IMG_fg_theta_vs_noise}}" alt="theta vs noise">
+    <figcaption>两个需求两个来源:<b>需求 1「参数能改变输出」由漂移里的 <code>v_θ</code> 提供;需求 2「输出有可算的概率」只能由噪声提供。</b>
+      这正是两条路线分岔的地方:只用需求 1 → 可微奖励反传 / NFT 式监督目标(不必加噪声);需要需求 2 → 策略梯度(必须加噪声)。</figcaption></figure>
+
+  <h3>A.18 漂移的读法:两项的角色与配比</h3>
+  <p>把一步的位移拆开(生成方向 <code>dσ &lt; 0</code>):</p>
+  <pre>Δ = −|dσ|(1+nl²/2)·v_θ  +  |dσ|(g²/2)·∇log p  +  s·ξ
+      └ ① 送粒子(沿 −v_θ)┘    └ ② 往高密度回一点 ┘    └ ③ 探索 ┘</pre>
+  <table>
+    <tr><th>项</th><th>作用</th><th>谁决定</th></tr>
+    <tr><td>① <code>−v_θ</code></td><td><b>决定粒子往哪去</b> —— θ 影响学习的主通道</td><td>θ</td></tr>
+    <tr><td>② <code>∇log p</code></td><td><b>把噪声刚撑开的分布收回来</b> —— 精确对账(噪声 <code>+g²|dσ|</code>,② 收回 <code>≈−g²|dσ|</code>)</td><td>σ(形式上由 <code>v_θ</code> 算出)</td></tr>
+    <tr><td>③ <code>s·ξ</code></td><td>探索</td><td>采样器,与 θ 无关</td></tr>
+  </table>
+  <p><b>★ 一个非常不直观的定量事实:两项的配比随 σ 剧变。</b></p>
+  <table>
+    <tr><th>σ</th><td>0.1</td><td>0.3</td><td>0.5</td><td>0.7</td><td>0.9</td><td>0.99</td></tr>
+    <tr><th>② 的占比</th><td><b>1.2%</b></td><td>4.5%</td><td>10%</td><td>21%</td><td><b>50%</b></td><td><b>91.7%</b></td></tr>
+  </table>
+  <p>⇒ <b>靠数据端(σ 小)几乎就是纯粹的"按 <code>−v_θ</code> 走"</b>(补偿只占百分之几);<b>靠噪声端(σ→1)一半以上是"往高密度回"</b>。
+    含义:θ 的<b>学习通道主要在靠数据端</b>,靠噪声端更多是"保值分布"的记账。</p>
+  <figure><img src="{{IMG_fg_drift_meaning}}" alt="meaning of drift">
+    <figcaption>(a) 按真实比例:两个高斯几乎重合 —— <b>单步平移只有单步抖动宽度的 29%</b>,所以单条轨迹看着抖,但平移是<b>系统性</b>的;
+      (b) 两个系数与噪声宽度;(c) 三点精确化:不只是 <code>v_θ</code>、移动的是"落点分布的中心"、同时还要加宽。</figcaption></figure>
+  <figure><img src="{{IMG_fg_drift_two_roles}}" alt="two roles of drift">
+    <figcaption>(a) 三项位移;(b) 配比从 1% 变到 92%;(c) 两项在干什么 + 噪声与补偿的精确对账(σ=0.7:噪声 +0.03070,② 造成 −0.03025)。</figcaption></figure>
+
+  <h3>A.19 "x 项"是什么:补偿项展开后的另一半</h3>
+  <p>系数表里那个"<code>x</code> 项"容易让人困惑:<code>∇log p</code> 明明是用 <code>v_θ</code> 算的,怎么会冒出一个正比于 <code>x</code> 的项?<b>因为 <code>∇log p</code> 的表达式里本来就有 <code>x</code>:</b></p>
+  <pre>∇log p_σ(x) = −(x + (1−σ)v_θ)/σ          ← 分子里同时有 x 和 v_θ
+
+代进补偿项,它就裂成两半:
+  补偿 = −(g²/2)∇log p = (g²/(2σ))·x  +  (g²(1−σ)/(2σ))·v_θ
+                          └ 含 x 的一半 ┘   └ 含 v_θ 的一半 ┘
+
+所以   f = v_θ + 补偿 = (g²/(2σ))·x + [1 + g²(1−σ)/(2σ)]·v_θ
+                          └ 纯补偿 ┘    └ v_θ 自己 + 补偿的另一半 ┘</pre>
+  <p><b>"沿 <code>∇log p</code> 往高密度收"和"写成 <code>x</code> 的系数"是同一件事的两种说法:</b>
+    <code>x</code> 项描述"离密度峰多远"(所以它正比于 <code>x</code>),<code>v_θ</code> 项描述"峰在哪里"(密度中心跟着数据走)。</p>
+  <figure><img src="{{IMG_fg_x_term_meaning}}" alt="what is the x term">
+    <figcaption>(a) 补偿项展开成两半;(b) 数值核对(σ=0.7:两半 <code>+0.4167 / +0.0625</code>,相加 <code>+0.4792</code> = 补偿;漂移两种写法都给 <code>+0.9792</code>);
+      (c) 靠噪声端 <code>x</code> 项迅速变大,而 <code>v_θ</code> 项(除以 <code>dσ</code>)恒为 <code>1+nl²/2</code>。</figcaption></figure>
+
+  <h3>A.20 能学到什么、学不到什么</h3>
   <table>
     <tr><th>学到 ✅</th><th>论文数字</th></tr>
     <tr><td>组合 / 计数 / 空间关系("两个红球在左边")</td><td>GenEval <b>63% → 95%</b></td></tr>
@@ -873,7 +956,7 @@ x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
       (直线是插值,不是 ODE 轨迹;单点数据才直;要直得靠 reflow);(b) RL 改的是场,所以轨迹形状会变,
       但"从噪声 ODE 积到数据"这件事没变;(c) 什么变、什么没变。</figcaption></figure>
 
-  <h3>A.17 诚实边界清单</h3>
+  <h3>A.21 诚实边界清单</h3>
   <table>
     <tr><th>#</th><th>边界</th></tr>
     <tr><td>1</td><td>等价 SDE 是<b>连续时间</b>结论;离散化有偏差(实测 ~1%),所以 Denoising Reduction 是<b>近似</b>,不是定理。</td></tr>
@@ -887,7 +970,7 @@ x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
     <tr><td>9</td><td>本附录所有数值来自 1 维/解析可算的 toy(可复现,脚本在 <code>tools/vae_dit_story/</code>),<b>不是真实图像模型的实测</b>。</td></tr>
   </table>
 
-  <h3>A.18 一页速查</h3>
+  <h3>A.22 一页速查</h3>
   <pre>【链条】
   插值 x_σ=(1−σ)x₀+σε  →  v*=E[ε−x₀|x_σ]=(x−E[x₀|x])/σ
   →  Tweedie 与 score 两个恒等式        →  ODE 采样器合格(局部⟹全局)
@@ -910,6 +993,211 @@ x 的系数   A = 1 + dσ·nl²/(2(1−σ))  ← 依赖 σ,但不含 θ</pre>
   把 flow 的确定性 ODE 换成边缘分布相同的随机 SDE ⇒ 每步有可算似然
   ⇒ 才能用组内相对奖励做策略梯度 ⇒ 把"难写成损失但容易打分"的目标学进来。</pre>
   </div></section>
+
+
+<section id="appendixB"><div class="wrap">
+  <h2 class="appx"><span class="tag">附录 B</span>DiffusionNFT:在前向过程上做监督式 RL</h2>
+  <p class="lead">附录 A 讲的是 <b>Flow-GRPO</b>:把采样器改成 SDE,换到"每步可算的似然",再做策略梯度。
+    NVIDIA 的 <b>DiffusionNFT</b>(Negative-aware FineTuning,[arXiv 2509.16117](https://arxiv.org/abs/2509.16117),ICLR'26 Oral)
+    走了另一条路:<b>采样过程完全不动,把奖励塞进一个普通的 flow matching 回归里。</b>
+    本附录把它的每个公式都拆到能核对的程度,并给出它与 Flow-GRPO 的取舍。</p>
+
+  <div style="background:#fff;border-left:4px solid var(--green);padding:10px 14px;border-radius:6px">
+    <b>一句话</b>:采样照旧(任意 solver,甚至确定性 ODE)⇒ 拿到干净图 + 奖励 ⇒ 把奖励压成 <code>r∈[0,1]</code> 的权重
+    ⇒ <b>对自己采的图重新加噪,做一次"奖励加权的 flow matching 回归"</b> ⇒ 软更新锚点,下一轮。<br>
+    <b>不需要似然、不需要轨迹、不需要 CFG、没有 ratio/clip/KL。</b>
+  </div>
+
+  <h3>B.1 它在"五条路线"里的位置</h3>
+  <p>DiffusionNFT 论文自己把 T2I 对齐分成五条主线,并明确说 Flow-GRPO 属于第 4 条:</p>
+  <pre>(1) direct fine-tuning with scalar rewards [30–33]     ← 可微奖励反传(DRaFT / ReFL / AlignProp)
+(2) Reward Weighted Regression (RWR)
+(3) DPO 及其变体
+(4) PPO-style policy gradients                          ← Flow-GRPO
+(5) training-free alignment</pre>
+  <p>而 DiffusionNFT 走的是<b>第三条</b>:既不像 (1) 要求奖励可微,也不像 (4) 要求似然 —— 它把奖励变成<b>监督目标里的方向与权重</b>。</p>
+  <p>论文对 (4) 的核心批评有三条,而且它自己在 Appendix B.3 里<b>独立推出了我们在 A.12 得到的那个结论</b>:</p>
+  <pre>∇_θ L = (m(s,t)/n(s,t))·∇_θ[ (1/N)Σ_i (A⁽ⁱ⁾ε⁽ⁱ⁾)ᵀ v_θ ]
+⇒ "FlowGRPO essentially aligns the velocity field with the advantage-weighted noise"</pre>
+  <p>这正是我们推过的 <code>E[A·ξ] = s·∂E[R]/∂m</code>。他们的批评也很关键:<b>权重 <code>m/n</code> 显式依赖采样器参数(步长、噪声调度)</b> ⇒ 换 solver 就换了目标函数。</p>
+  <figure><img src="{{IMG_fg_flowgrpo_vs_nft}}" alt="Flow-GRPO vs DiffusionNFT">
+    <figcaption>(a) 两条流水线;(b) 隐式正/负策略的几何(β=1:好样本模仿、坏样本绕锚点反射);(c) 差异表 + 消融 + 他们对 GRPO 的独立推导。</figcaption></figure>
+
+  <h3>B.2 到底改了哪里</h3>
+  <p><b>Flow-GRPO 改的是【采样器】</b>(ODE→SDE,为了拿似然);<b>DiffusionNFT 改的是【训练目标】</b>(奖励加权的前向回归)。
+    但要注意:DiffusionNFT <b>仍然有在线采样</b>(每个 prompt 采 K 张、打分),只是不需要改采样器的性质。</p>
+  <table>
+    <tr><th></th><th>Flow-GRPO</th><th>DiffusionNFT</th></tr>
+    <tr><td>优化对象</td><td>反向采样过程(逐步 SDE)</td><td><b>前向过程(FM 插值)</b></td></tr>
+    <tr><td>学习目标</td><td>策略梯度 <code>−A·log π</code></td><td><b>监督回归</b></td></tr>
+    <tr><td>似然</td><td><b>必须</b></td><td><b>不需要</b></td></tr>
+    <tr><td>训练数据</td><td>整条轨迹 + 每步 <code>log π</code></td><td><b>只要干净样本 <code>x₀</code> + 标量 <code>r</code></b></td></tr>
+    <tr><td>solver</td><td>必须是训练用的那个 SDE</td><td><b>任意</b>(可用 2 阶 ODE)</td></tr>
+    <tr><td>CFG</td><td>推理时需要</td><td><b>不需要</b></td></tr>
+  </table>
+  <figure><img src="{{IMG_fg_nft_where_to_change}}" alt="where to change">
+    <figcaption>三栏对照:预训练 / Flow-GRPO(改采样器)/ DiffusionNFT(改训练目标)。共同点是都要"生成候选 + 打分",区别只在<b>奖励从哪个口子进去</b>。</figcaption></figure>
+
+  <h3>B.3 算法全流程(论文 Algorithm 1 + Appendix C)</h3>
+  <pre>① Rollout     标准 solver 采 K=24 张/prompt(2 阶 ODE,10 步;各样本不同 ε);打分
+② 奖励→权重    r_norm = r_raw − mean(组内) → a = clip{r_norm/Z_c, ±1} → r = 0.5 + 0.5a ∈ [0,1]
+③ 存缓冲       D ← {c, x₀, r}         ← 【只要干净样本】,不要轨迹、不要 log π
+④ 前向加噪     x_t = α_t x₀ + σ_t ε ,  v = α̇_t x₀ + σ̇_t ε   (用采样时的 t 网格)
+⑤ 隐式双分支   v⁺_θ = (1−β)v_old + βv_θ ,  v⁻_θ = (1+β)v_old − βv_θ
+⑥ 加权回归     L = r‖v⁺_θ − v‖² + (1−r)‖v⁻_θ − v‖²   (时间权重 w(t),大 t 更高)
+⑦ 软更新锚点   v_old ← η v_old + (1−η) v_θ ,  η_i = min(0.001i, 0.5)</pre>
+  <p>超参:LoRA(α=64, r=32)、lr=3e-4、<b>β=1</b>(单奖励)/ <b>0.1</b>(多奖励);对比实验固定 10 步采样。
+    <b>没有的东西</b>:<code>log π</code>、轨迹、ratio、clip、KL、CFG、value 网络。</p>
+  <figure><img src="{{IMG_fg_nft_training_half}}" alt="NFT training half">
+    <figcaption>(a) 七步流程图;(b) 解出目标公式后,三个因子各自的角色(锚点/符号/幅度);(c) 目标随奖励在锚点两侧移动。</figcaption></figure>
+
+  <h3>B.4 ④ 前向加噪:为什么要"重新加噪"</h3>
+  <p>这一步最容易卡住:<b>刚去噪出来的图,为什么又加噪?</b> 因为"采样"和"训练"是<b>方向相反、目的不同</b>的两件事:</p>
+  <pre>采样(部署时干的):  ε  ──去噪──▶  x₀        目的:造出一张图
+训练(学的时候干的): x₀ ──加噪──▶  x_t       目的:出题,教网络"速度场长什么样"</pre>
+  <p>网络的输入<b>永远是带噪点 <code>(x_t, t)</code></b>;而且"速度"需要同一条路径上的两个点才能定义 —— 干净图本身没有速度。所以必须造出带噪点,并且给出正确答案:</p>
+  <pre>拿一张 x₀,【重新抽】一个 ε_new:
+    x_t = α_t x₀ + σ_t ε_new        ← 点是我们【画】出来的,不是采样走过的那条轨迹上的
+    v   = α̇_t x₀ + σ̇_t ε_new        ← 对这条直线求导,闭式、精确
+取 α_t = 1−t, σ_t = t  ⇒  v = ε − x₀   ← 与附录 A 的 v 完全一样(只是换了字母)</pre>
+  <p><b>为什么答案是免费的?</b> 生成时你看到 <code>x_t</code> 不知道它来自哪个 <code>x₀</code>(只能取条件期望);训练时 <code>x₀</code> 和 <code>ε</code> 都在手里,直接算。
+    <b>为什么用新的 <code>ε</code>?</b> 一张 <code>x₀</code> 就能出无数道题(不同噪声方向 × 不同水平),而且**不必保存采样轨迹**。</p>
+  <figure><img src="{{IMG_fg_forward_noising}}" alt="forward noising">
+    <figcaption>(a) 前向直线 + t 网格取点;(b) 目标 <code>v</code> 为什么是闭式的 + 记号对照 + 数值例;(c) 三个"为什么"。</figcaption></figure>
+  <figure><img src="{{IMG_fg_why_renoise}}" alt="why re-noise">
+    <figcaption>(a) 采样与训练方向相反;(b) 重新抽 ε ⇒ 一张图出无数道题;(c) 为什么必须加噪 / 为什么用新 ε / 奖励在这一步不参与。</figcaption></figure>
+
+  <h3>B.5 组间优势:多样性从哪来、优势怎么算、优势怎么用</h3>
+  <p><b>多样性来自每个样本不同的初始噪声 <code>ε</code></b> —— 因为是确定性 ODE,组内差异只能来自这里(附录 A 已用 3000 条 ODE 轨迹验证过:只靠 <code>ε</code> 的多样性是充分的)。</p>
+  <pre>r_norm = r_raw − mean({r_raw}^{1:K})          ← 组内减均值(和 GRPO 第一步一样)
+a      = clip{ r_norm / Z_c, −1, +1 }         ← 归一化 + 截断
+r      = 0.5 + 0.5a  ∈ [0,1]                  ← 映射成"最优概率"
+⟹ 2r − 1 = a 就是【组内相对优势】</pre>
+  <p><b>但优势的用法完全不同:</b>不解乘在 <code>log π</code> 上,而是作为<b>"朝样本走多远"的系数</b>。把 ⑥ 对 <code>v_θ</code> 最小化(已数值验证):</p>
+  <pre>v_θ 的目标 = v_old + (2r−1)·(v − v_old)/β
+              └ 锚点 ┘   └ 优势 a ┘  └ 方向与幅度 ┘
+a = +1(组内最好)→ 目标 = v          模仿
+a =  0(组内平均)→ 目标 = v_old      【完全不更新】✓
+a = −1(组内最差)→ 目标 = 2v_old−v   反着学</pre>
+  <figure><img src="{{IMG_fg_nft_advantage}}" alt="NFT advantage">
+    <figcaption>(a) 多样性来自初始噪声;(b) 优势的算法链 + 解出的目标;(c) 优势只决定"朝样本走多远"的几何。
+      <b>判别关键:一组奖励若全一样 ⇒ a≡0 ⇒ 目标都是 v_old ⇒ 一步都不动</b> —— 与 GRPO 一样必须组内相对比较。</figcaption></figure>
+
+  <h3>B.6 损失公式逐符号拆解</h3>
+  <table>
+    <tr><th>符号</th><th>是什么</th><th>来源 / 范围</th></tr>
+    <tr><td><code>v_θ</code></td><td><b>正在训练的网络</b>(要更新的那个);输入 <code>(x_t,t,c)</code>,输出速度向量</td><td>参数 θ</td></tr>
+    <tr><td><code>v_old</code></td><td><b>参照速度(锚点)</b> —— 上一轮 <code>v_θ</code> 的软平均,<b>不参与求导</b></td><td>EMA</td></tr>
+    <tr><td><code>v</code></td><td><b>这张图的正确答案</b>(考题)<code>= ε − x₀</code></td><td><code>x₀</code> 采到的,<code>ε</code> 新抽的</td></tr>
+    <tr><td><code>r</code></td><td><b>这张图有多好</b>,<code>0.5</code>=组内平均</td><td><code>∈[0,1]</code></td></tr>
+    <tr><td><code>β</code></td><td><b>引导强度</b></td><td>1(单奖励)/ 0.1(多奖励)</td></tr>
+  </table>
+  <p>两个"分身"最好写成<b>以锚点为支点</b>的形式,这样 <code>β</code> 的含义一目了然:</p>
+  <pre>好策略  v⁺_θ = v_old + β·(v_θ − v_old)     ← 朝 v_θ 移 β 倍
+坏策略  v⁻_θ = v_old − β·(v_θ − v_old)     ← 朝【反方向】移 β 倍</pre>
+  <p>而损失的两项<b>都在匹配同一个 <code>v</code></b>,只是匹配的是不同的函数 —— 谁主导由权重决定:</p>
+  <pre>L = r·‖v⁺_θ − v‖² + (1−r)·‖v⁻_θ − v‖²
+    r 大 ⇒ 第一项重 ⇒ 逼着【好策略】等于 v
+    r 小 ⇒ 第二项重 ⇒ 逼着【坏策略】等于 v</pre>
+  <figure><img src="{{IMG_fg_nft_formula_explained}}" alt="formula explained">
+    <figcaption>(a) 五个符号;(b) 两个分身以锚点为支点、左右各 β 倍;(c) 两项怎么合成一个目标 + <code>β</code> 的双重作用数值表。</figcaption></figure>
+
+  <h3>B.7 两项形式一样,凭什么一正一反?</h3>
+  <p>这是最容易起疑的地方:两项形式完全相同,凭什么一个模仿、一个反学?<b>唯一的区别是分身与 <code>v_θ</code> 的连接符号相反:</b></p>
+  <pre>v⁺_θ = v_old + β(v_θ − v_old)     ← v_θ 的系数 +β
+v⁻_θ = v_old − β(v_θ − v_old)     ← v_θ 的系数 −β
+
+链式法则把符号带出来:
+  ∂/∂v_θ ‖v⁺_θ − v‖² = 2(v⁺_θ − v)·(+β)
+  ∂/∂v_θ ‖v⁻_θ − v‖² = 2(v⁻_θ − v)·(−β)</pre>
+  <p>数值核对(起点 <code>v_θ=v_old=0</code>, <code>β=1</code>, <code>v_old=0</code>, <code>v=1</code>):两项的<b>值都是 1.000</b>,但<b>梯度是 −2.000 与 +2.000</b> —— 一个把 <code>v_θ</code> 往上推,一个往下推。
+    所以"形式相同"完全不妨碍"一个拉近、一个推远":<b>两项共用同一个靶心,但两个分身站在锚点的两侧。</b></p>
+  <figure><img src="{{IMG_fg_two_terms_sign}}" alt="two terms sign">
+    <figcaption>(a) 表面矛盾;(b) 链式法则后梯度反号(含数值);(c) 翻译成"对 <code>v_θ</code> 的要求" ⇒ 两个关于锚点对称的目标。</figcaption></figure>
+  <p>更进一步,整个损失可以<b>完全等价</b>地改写成"让 <code>v_θ</code> 去追两个对称目标"(数值验证:损失值与梯度逐点相同):</p>
+  <pre>注意 v⁺_θ − v = β(v_θ − T⁺) ,  v⁻_θ − v = −β(v_θ − T⁻)
+其中 T⁺ = v_old + (v−v_old)/β ,  T⁻ = v_old − (v−v_old)/β      ← 关于锚点【对称】
+⇒ L = β²·[ r‖v_θ − T⁺‖² + (1−r)‖v_θ − T⁻‖² ]
+⇒ ∇_θ L = 2β²(v_θ − T)·∂v_θ/∂θ ,   T = rT⁺ + (1−r)T⁻ = v_old + (2r−1)(v−v_old)/β</pre>
+  <p><b><code>T±</code> 的含义</b>:"若这一项独占损失,网络输出该变成的值"。而 <code>T</code> 就是网络真正要追的目标 —— <b>按奖励在两个对称目标之间滑动</b>。
+    所以整套东西拆到最后就是:<b>两个对称软目标 + 一个由奖励控制的滑动权重</b>,梯度就是"朝加权目标走"。</p>
+  <figure><img src="{{IMG_fg_implicit_branches}}" alt="implicit branches">
+    <figcaption>(a) 分清三件事:模型只有 <code>v_θ</code>;两个分身只活在损失里;所以改的是损失不是预测。
+      (b) 等价变换 + 数值核对。(c) <code>β</code> 的双重作用(目标位置 <code>∝1/β</code>,梯度量级 <code>∝β²</code>)。</figcaption></figure>
+  <figure><img src="{{IMG_fg_T_meaning}}" alt="what is T">
+    <figcaption><code>T⁺/T⁻</code> 的推导、对称几何、以及 <code>T</code> 随 <code>r</code> 的滑动(<code>r=0.5</code> 时目标正好是锚点 ⇒ 不动)。</figcaption></figure>
+
+  <h3>B.8 这为什么算 RL?(而不是"只是新训练数据")</h3>
+  <p><b>这个疑问非常准,而且对了一半:</b>如果损失只有一个分支 <code>L = ‖v_θ − v‖²</code>,那确实与奖励无关,只是"把采集到的数据复述一遍"(RFT/自训练),<b>不是 RL</b>。</p>
+  <p>让它是 RL 的,是<b>奖励决定答案正着用还是反着用</b>:同一份 <code>v</code>,高奖励的样本用来"拉近"、低奖励的用来"推远"。
+    判据很硬:<b>若一组奖励全一样,<code>a ≡ 0</code>,目标就都等于 <code>v_old</code> —— 模型一步都不动。</b></p>
+  <p>所以两者其实在估计同一件事,只是载体不同:</p>
+  <pre>GRPO:用【噪声】当随机探针,统计地估方向     E[A·ξ] = s·∂E[R]/∂m      (无偏,有方差)
+NFT :用【正负样本对比】直接构造目标          v_old + (2r−1)(v−v_old)/β (确定,无无偏保证)</pre>
+  <table>
+    <tr><th></th><th>GRPO</th><th>NFT</th></tr>
+    <tr><td>奖励变成信号</td><td>优势 <code>A</code> 乘在 <code>log π</code> 上</td><td><code>r</code> 决定拉近/推远</td></tr>
+    <tr><td>载体</td><td>似然</td><td>回归目标</td></tr>
+    <tr><td>需要参照策略</td><td>old policy 的 <code>log π</code></td><td><b>锚点 <code>v_old</code></b></td></tr>
+    <tr><td>方向从哪来</td><td>噪声 <code>ξ</code>(随机探针)</td><td>样本偏移 <code>v−v_old</code></td></tr>
+  </table>
+  <figure><img src="{{IMG_fg_nft_is_rl}}" alt="is it RL">
+    <figcaption>(a) 一个分支 vs 两个分支;(b) 组内数值例(奖励 [1,0,1,1] ⇒ <code>a=[+0.58,−1.00,+0.58,+0.58]</code>,平均 0);
+      (c) 与 GRPO 的关系与深层共同点。</figcaption></figure>
+
+  <h3>B.9 off-policy 能力与 <code>η</code> 的确切含义</h3>
+  <p><b>NFT 的 off-policy 指:</b>数据由采集策略 <code>v_old</code> 产生,而训练在更新 <code>v_θ</code>;一旦两者分开,后续梯度步用的就是旧策略采的数据。
+    <code>η</code> 控制的就是这个<b>滞后</b> —— 由 EMA 的经典结论给出闭式:</p>
+  <pre>v_old ← η·v_old + (1−η)·v_θ      ⇒    平均滞后 = η/(1−η) 【次迭代】
+
+η = 0.001 → ≈ 0 次(几乎不落后)   ← 论文起始 η_i = 0.001i
+η = 0.5   → 1.000 次             ← 论文上限
+η = 0.9   → 9.000 次             ← 消融:收敛慢
+η = 0.999 → 999 次               ← OCR 用</pre>
+  <p><b>它为什么能支持 off-policy?因为损失里【没有 ratio】:</b>回归目标在数据陈旧时仍然有定义、仍然有界,只是方向"过时";
+    而重要性权重在陈旧时会指数级跑偏,必须靠 clip/KL 兜。</p>
+  <p><b>为什么可以不要重要性采样(IS)?</b> 这是路线层面的差别:</p>
+  <pre>IS 是为"策略梯度估计的【无偏性】"服务的;
+而 NFT 要的不是"无偏估计",而是"【构造】一个改进方向"(Theorem 3.1)。
+⇒ 不追求无偏 ⇒ 不需要 IS。</pre>
+  <p><b>诚实的结论:</b>是的,<code>η</code> 本质是<b>启发式超参</b>(靠消融定界:η=0 不稳、0.9 太慢、小→大最好);
+    但它的作用<b>可解释、可量化</b> —— 它等价于声明"我愿意用多旧的数据、锚点多旧"。
+    这与 GRPO 的 clip/KL 不同:后者是在<b>一个有保证的框架</b>里做受控近似,而 <code>η</code> 是在<b>一个没有无偏保证的框架</b>里调启发式强度。</p>
+  <figure><img src="{{IMG_fg_nft_offpolicy}}" alt="NFT off-policy">
+    <figcaption>(a) off-policy 在 NFT 里指什么;(b) 监督式回归为什么不怕陈旧;(c) 副产品:<code>v_old</code> 兼作"隐式 KL"锚点。</figcaption></figure>
+  <figure><img src="{{IMG_fg_nft_eta_offpolicy}}" alt="eta controls off-policy">
+    <figcaption>(a) 两个问题拆开;(b) <code>η</code> 就是"采集策略落后多少"的旋钮(实测与公式一致);(c) 为什么能不要 IS + 诚实结论。</figcaption></figure>
+
+  <h3>B.10 记分卡与诚实边界</h3>
+  <table>
+    <tr><th>NFT 更好</th><th>GRPO 更好 / NFT 更弱</th></tr>
+    <tr><td>不要似然 ⇒ 显存低、只存干净样本</td><td><b>理论</b>:策略梯度定理(无偏);NFT 是构造式"改进方向",<b>无无偏保证</b></td></tr>
+    <tr><td>solver 任意(可用确定性 ODE;消融显示 ODE 采集优于 SDE)</td><td>NFT 是<b>监督 + RL 的混合体</b>,不是标准 RL</td></tr>
+    <tr><td>不需要 CFG</td><td>NFT <b>超参更敏感</b>(β、η、时间权重;去掉负分支→奖励崩溃,时间权重反过来→也崩)</td></tr>
+    <tr><td>效率:1k 步 vs 5k+ 步</td><td>off-policy 程度靠启发式 <code>η</code>(无理论最优值)</td></tr>
+  </table>
+  <p><b>一个常见的误判要先纠正:</b>NFT <b>不</b>保证"路径形状不变"。两者都只改 θ —— θ 变了,场就变了,积分出来的路径当然会变。
+    NFT 真正避免的是"<b>训练目标与采样器纠缠</b>"(GRPO 的权重 <code>m/n</code> 依赖步长与噪声调度),
+    以及"采集器被迫用 SDE"。<b>但"分布被推得更偏 ⇒ 场更难积分 ⇒ 需要更多步"这个风险是两者共有的,而且两篇论文都没测"质量 vs 步数"曲线。</b></p>
+  <p>所以正确说法是:<b>NFT 的优势是【与采样器解耦】</b> —— 你可以直接按部署用的 solver 和步数来训练(因为它不依赖似然),从而让优化目标与部署设置天然对齐;
+    "步数不会变长"不是它的保证。(对比:Flow-GRPO 那边,若训练 19 步、部署 4 步,RL 根本看不到 4 步的退化。)</p>
+  <figure><img src="{{IMG_fg_nft_better}}" alt="NFT scorecard">
+    <figcaption>(a) 直觉的一半对(与采集器解耦)、一半要纠正(路径形状照旧会变);(b) "步数变长"的风险来自哪里 —— 第一行两者共有;(c) 记分卡。</figcaption></figure>
+  <table>
+    <tr><th>#</th><th>边界</th></tr>
+    <tr><td>1</td><td>本附录所有数值来自论文原文与 1 维代数的核对,<b>不是真实模型实测</b>;代理数推导(如"两项等价改写成两个对称目标""平均滞后 <code>η/(1−η)</code>")已打印验证,但论文没有逐条给出。</td></tr>
+    <tr><td>2</td><td><code>η</code> 的调度、<code>β</code> 的取值、时间权重 <code>w(t)</code> 的具体形式<b>只由消融定界,没有理论最优</b>。</td></tr>
+    <tr><td>3</td><td>NFT 的"改进方向"是定理支撑的<b>构造</b>,不等于"当前策略期望回报的梯度";数据陈旧时更新<b>有偏</b>。</td></tr>
+    <tr><td>4</td><td>两篇论文的 GenEval 基线不同(NFT 用无 CFG 基座,基线更低),<b>不能直接横比</b>;能横比的是他们做的 head-to-head(固定 10 步)。</td></tr>
+    <tr><td>5</td><td>"少步采样质量"在 RL 前后的变化<b>两篇都没报</b>,是空白项。</td></tr>
+    <tr><td>6</td><td>只在 T2I 上验证;视频 / 机器人 / 世界模型上是否同样成立,未知。</td></tr>
+  </table>
+  <div style="background:#fffbe6;border-left:4px solid var(--orange);padding:10px 14px;border-radius:6px">
+    <b>两条路线的一句话对照</b><br>
+    <b>Flow-GRPO</b>:把随机性放进【采样器】⇒ 有了似然 ⇒ 梯度是"优势 × 噪声方向"(策略梯度,理论强、方差大、与采样器绑定)。<br>
+    <b>DiffusionNFT</b>:采样器不动 ⇒ 把奖励放进【监督目标】⇒ 梯度是"朝加权目标 <code>T</code> 走"(构造式、简单、快、能与部署设置对齐、但没有无偏保证)。
+  </div>
+</div></section>
 
 <section id="gloss"><div class="wrap">
   <h2>术语、五个易错点与准确性边界</h2>
