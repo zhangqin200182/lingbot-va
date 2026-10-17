@@ -1197,6 +1197,103 @@ NFT :用【正负样本对比】直接构造目标          v_old + (2r−1)(v�
     <b>Flow-GRPO</b>:把随机性放进【采样器】⇒ 有了似然 ⇒ 梯度是"优势 × 噪声方向"(策略梯度,理论强、方差大、与采样器绑定)。<br>
     <b>DiffusionNFT</b>:采样器不动 ⇒ 把奖励放进【监督目标】⇒ 梯度是"朝加权目标 <code>T</code> 走"(构造式、简单、快、能与部署设置对齐、但没有无偏保证)。
   </div>
+  <h3>B.11 它更像 RFT 吗</h3>
+  <p><b>是近亲 —— 而且论文自己就是这么定位的。</b>它把"只对正样本做扩散训练"称为 <b>RFT(Rejection FineTuning)</b>,并明确说:</p>
+  <pre>"previous work performs diffusion training solely on D⁺, known as RFT.
+ Despite the simplicity, RFT cannot effectively leverage negative data in D⁻."
+ "We posit that negative feedback is crucial to policy improvement."</pre>
+  <pre>RFT:  L = Σ_{好样本} ‖v_θ − v_i‖²                     ← 坏样本【丢弃】
+NFT:  L = Σ_i [ r_i‖v⁺_θ − v_i‖² + (1−r_i)‖v⁻_θ − v_i‖² ]
+              └ 好样本:拉向它(≈ RFT)┘   └ 坏样本:绕锚点反射着推离 ┘</pre>
+  <p>三处区别:<b>① 坏样本从"丢掉"变成"反向目标";② 权重从硬 0/1 变成软的 <code>r∈[0,1]</code>;③ 多了锚点 <code>v_old</code> 控制步长。</b>
+    系谱上更准的说法是:</p>
+  <pre>SFT / 自训练 → RFT(只用好的) → RWR(连续权重,但全正) → NFT(软权重 + 负分支 + 锚点)
+⇒ NFT ≈ (在线)RWR + 负分支 + 锚点步长控制</pre>
+  <div style="background:#fdecea;border-left:4px solid var(--red);padding:10px 14px;border-radius:6px">
+    <b>★ 但结局完全相反。</b>论文消融:"<b>Without the negative policy loss on v⁻_θ, we find rewards collapse almost instantly</b> ...
+    This phenomenon is <b>divergent from observations in LLMs, where RFT remains a strong baseline</b>."
+    <b>⇒ "更像 RFT"恰恰是 NFT 要避免的那件事。</b>
+  </div>
+  <p><b>为什么 LLM 里 RFT 行、扩散里崩?</b>(下面是<b>我的机制解释</b>,论文没有展开)</p>
+  <pre>LLM:SFT 在好回答上时,softmax 的归一化让
+    "提高好 token 的概率"【同时精确压低其他 token】 ⇒ 天然自带负反馈
+
+扩散:FM 损失是【逐点局部回归】‖v_θ(x_t,t) − v‖²
+    只在好样本附近的点上降误差,对别处的坏区域【没有任何直接梯度】
+    ⇒ 坏模式可以一直留着</pre>
+  <figure><img src="{{IMG_fg_nft_vs_rft}}" alt="NFT vs RFT">
+    <figcaption>(a) 两者的损失对照;(b) 系谱:每一步加了什么;(c) 为什么 LLM 行、扩散崩(含论文实证)。</figcaption></figure>
+
+  <h3>B.12 有没有更好的算法</h3>
+  <p><b>没有"既要又要"的通用解 —— 原因在信息层面,不在算法聪明程度。</b></p>
+  <pre>你手里只有两种信息:
+  (a) "这条轨迹在当前策略下的【概率】" → 能算【无偏】策略梯度,但要似然 ⇒ "啰嗦"
+  (b) "这个样本好不好"(标量奖励)      → 只能构造【有偏】代理目标 ⇒ 但便宜、稳、快
+
+想在 (b) 上拿无偏梯度,只剩"扰动参数看奖励"(零阶 / ES)
+  ⇒ 但样本复杂度随参数维度爆炸 ⇒ 只能在小维度(LoRA 子空间)用</pre>
+  <table>
+    <tr><th>路线</th><th>无偏?</th><th>要似然?</th><th>代价</th></tr>
+    <tr><td><b>① 策略梯度</b>(GRPO / DDPO)</td><td>✓</td><td><b>✓</b></td><td>方差大 + 绑 solver 与 CFG</td></tr>
+    <tr><td><b>② 监督重加权</b>(RWR / NFT)</td><td>✗</td><td>✗</td><td>温度/锚点/η 靠启发式</td></tr>
+    <tr><td><b>③ 可微奖励反传</b>(DRaFT / ReFL / AlignProp)</td><td><b>✓</b></td><td><b>✗</b></td><td>奖励必须可微;显存贵(整条链)</td></tr>
+    <tr><td><b>④ 零阶 / ES</b>(参数扰动)</td><td>✓</td><td>✗</td><td>方差随维度爆炸,只适合小维度</td></tr>
+    <tr><td><b>⑤ 控制 / 最优传输</b>(SOC / adjoint matching)</td><td>近似</td><td>✗</td><td>回归式构造 ⇒ 回到 ② 的偏差</td></tr>
+  </table>
+  <p><b>★ 所以"更好的算法"确实有,但要换一个前提:</b>如果你的奖励<b>可微</b>(CLIP 分数、可微渲染、物理仿真),走 ③ ——
+    <code>∂R/∂θ = (∂R/∂x(T))·(∂x(T)/∂θ)</code>,<b>无偏、无方差、不要似然、不要 IS、不要 SDE、不要 CFG</b>,代价是整条采样链留在计算图里。
+    <b>觉得"两个都不完美",很可能只是因为奖励是黑盒的。</b></p>
+  <p><b>三条"合成"路线</b>:① 可微奖励当辅助项(<code>L = L_RL + λ(−R_diff)</code>,只对最后几步保留计算图);
+    ② 两阶段(先 ② 快速对齐,再 ① 精修);③ <b>② 之后蒸馏到少步</b>(回归式目标天然适合蒸馏 —— 正好能补上"少步质量没人测"的空白)。</p>
+  <figure><img src="{{IMG_fg_algorithm_landscape}}" alt="algorithm landscape">
+    <figcaption>(a) 两难来自信息;(b) 五条路线的取舍表;(c) 按"奖励可微性"分岔的实践建议 + 三条合成路线。</figcaption></figure>
+
+  <h3>B.13 on/off-policy:两种形态</h3>
+  <p><b>不能说"NFT 没有 on/off-policy 问题",而应该说"NFT 把它从【约束】变成了【旋钮】":</b></p>
+  <table>
+    <tr><th></th><th>GRPO</th><th>NFT</th></tr>
+    <tr><td>off-policy 的角色</td><td><b>约束</b>:数据必须基本来自当前策略,否则 <code>ρ</code> 失配 ⇒ 估计有偏/爆 ⇒ 必须 clip+KL 压回来</td><td><b>旋钮</b>:损失里没有 <code>ρ</code> ⇒ 不会技术上出错;但偏离仍让"优化旧策略给出的方向" ⇒ <b>有偏</b></td></tr>
+    <tr><td>性质</td><td>技术故障(会明确失效)</td><td>统计偏差(能用,但不等于真梯度)</td></tr>
+    <tr><td>代价处理</td><td>clip + KL,压回 on-policy</td><td>η / β 主动调节,并接受偏差</td></tr>
+  </table>
+  <p><b>★ 最硬的反证:<code>η</code> 的消融本身。</b><code>η=0</code>(最 on-policy)早期快但<b>不稳</b>;<code>η=0.9</code>(最 off-policy)<b>收敛慢</b>;小→大调度最好。
+    <b>如果 off-policy 无所谓,<code>η</code> 就不会出现"两端都受损"的行为。</b></p>
+  <figure><img src="{{IMG_fg_nft_onpolicy}}" alt="on/off-policy two forms">
+    <figcaption>(a) 同一个问题两种形态;(b) <code>η</code> 消融的反证(示意曲线据论文文字描述);(c) 代价对照与概念澄清。</figcaption></figure>
+
+  <h3>B.14 SFT 为什么没有 on/off-policy 问题</h3>
+  <p><b>因为 SFT 里【根本没有"策略"这个概念】</b> —— 关键差别在"期望在谁的分布下取":</p>
+  <pre>SFT:  L(θ) = E_{x ~ D}[ ℓ(f_θ(x), y) ]      ← D 是【给定的数据集】
+      ⇒ 没有"谁产生的数据"这个问题 ⇒ on/off-policy 【无从定义】
+
+RL :  J(θ) = E_{x ~ π_θ}[ R(x) ]            ← 期望在【θ 自己的分布】下取
+      ⇒ 数据来自 π_old ≠ π_θ 时,sample average 估的【不是 J(θ)】
+      ⇒ 需要重要性权重 π_θ/π_old ⇒ 这才有了 on/off-policy</pre>
+  <p><b>而 NFT 恰好卡在中间:</b>形式上它是 SFT(拟合一个奖励加权的数据集)⇒ 按这个读法<b>它同样没有 off-policy 问题</b>;
+    但它自称 online RL(目标是提升 <code>E_{π_θ}[R]</code>)⇒ 按 RL 的尺子量,数据来自 <code>π_old</code> 而没有 IS,就是有偏。</p>
+  <p><b>所以同一个"陈旧"有两把尺子:</b>SFT 的尺子叫<b>目标漂移</b>(不会失效,只是拟合的目标过时了);
+    RL 的尺子叫 <b>off-policy 偏差</b>(不是 <code>J(θ)</code> 的梯度)。<b>术语本身就是线索:RL 说 on/off-policy,SFT 说 distribution shift / mode collapse。</b></p>
+  <p>这个澄清其实<b>更有用</b>:既然 NFT 形式上就是监督学习,那么"SFT 的工程好处"它全都有(数据可复用、不用 ratio、对数据陈旧不敏感),
+    因此 <code>η</code> 的影响不是"估计会失效",而是"<b>我拟合的目标有多旧</b>" ——
+    <b>NFT 的 off-policy 风险是【目标漂移】,不是【估计爆炸】。</b></p>
+  <figure><img src="{{IMG_fg_why_sft_no_offpolicy}}" alt="why SFT has no off-policy issue">
+    <figcaption>(a) 三者的目标式与"期望在谁的分布下取";(b) 同一个"陈旧"的两种叫法;(c) 为什么仍标它"有偏"——
+      因为论文借用了 RL 的脚手架(标题、EMA 旧策略、组内优势、"policy improvement"的说法)。</figcaption></figure>
+
+  <h3>B.15 术语小词典(附录 B 用到的)</h3>
+  <table>
+    <tr><th>术语</th><th>全称 / 含义</th><th>在本附录里的位置</th></tr>
+    <tr><td><b>RFT</b></td><td>Rejection FineTuning:采样 → 打分 → <b>只对好样本</b>做监督训练,坏的丢掉</td><td>B.11(NFT 的正样本特例)</td></tr>
+    <tr><td><b>RWR</b></td><td>Reward Weighted Regression:用连续权重 <code>w(R)=exp(R/β)</code> 加权回归(权重<b>全为正</b>)</td><td>B.11(NFT 的另一个近亲)</td></tr>
+    <tr><td><b>IS</b></td><td>Importance Sampling:用 <code>π_new/π_old</code> 给旧数据重新加权,让估计<b>无偏</b></td><td>B.9(NFT 不用它)</td></tr>
+    <tr><td><b>on / off-policy</b></td><td>数据分布是否等于<b>当前被优化的策略</b>。只有"期望在自己的分布下取"的目标才有此概念</td><td>B.13 / B.14</td></tr>
+    <tr><td><b>DRaFT / ReFL</b></td><td>把<b>可微奖励</b>直接对采样链反传(不需要似然,梯度无噪声)</td><td>B.12 路线 ③</td></tr>
+    <tr><td><b>ES / 零阶</b></td><td>Evolution Strategies / zeroth-order:靠<b>扰动参数</b>看奖励变化来估梯度</td><td>B.12 路线 ④</td></tr>
+    <tr><td><b>SOC / adjoint</b></td><td>随机最优控制 / 伴随匹配:直接求解"修正后的漂移",数学上最接近 NFT 的推导</td><td>B.12 路线 ⑤</td></tr>
+    <tr><td><b>CFG</b></td><td>Classifier-Free Guidance:推理时用"有/无条件"两个速度外推;<b>会让场变非线性</b></td><td>B.2 / B.10</td></tr>
+    <tr><td><b>锚点 <code>v_old</code></b></td><td>损失里的参照速度(软更新的旧策略);也充当"隐式 KL"</td><td>B.5 / B.9</td></tr>
+  </table>
+
 </div></section>
 
 <section id="gloss"><div class="wrap">
